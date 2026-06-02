@@ -1,0 +1,31 @@
+{
+  "target_schema": "Account",
+  "expected_error_substrings": ["live_capital_enabled"],
+  "payload": {
+    "schema_version": "account.v1",
+    "account_id": "PAPER_COINBASE_SPOT_001",
+    "venue_id": "COINBASE_SPOT",
+    "account_type": "paper",
+    "status": "active",
+    "trading_permissions": ["read_market_data", "view_balances", "place_orders", "cancel_orders"],
+    "fee_tier_id": "COINBASE_SPOT_STANDARD_FEES",
+    "risk_limits": {
+      "max_order_notional_pct": "0.025",
+      "max_instrument_exposure_pct": "0.25",
+      "max_strategy_exposure_pct": "0.30",
+      "max_total_spot_exposure_pct": "0.60",
+      "min_cash_reserve_pct": "0.30",
+      "max_daily_loss_pct": "0.02",
+      "max_drawdown_pct": "0.08"
+    },
+    "key_scope": "paper_trade",
+    "live_capital_enabled": true,
+    "withdrawals_enabled": false,
+    "margin_enabled": false,
+    "derivatives_enabled": false,
+    "shorting_enabled": false,
+    "source_id": "FIXTURE_S1_001",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}
