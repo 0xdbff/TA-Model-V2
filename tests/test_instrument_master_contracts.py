@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Callable
+from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +26,7 @@ from ta_model.contracts.instrument_master import (
 )
 
 type FixtureModel = type[BaseModel]
+type PayloadMutator = Callable[[dict[str, Any]], None]
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "instrument_master"
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -41,6 +45,160 @@ MODEL_BY_NAME: dict[str, FixtureModel] = {
 
 def _load_json(path: Path) -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+
+
+def _consumer_contract_digest(consumer_view: dict[str, Any]) -> str:
+    payload = json.dumps(consumer_view, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _decimal_to_contract_string(value: Decimal | None) -> str | None:
+    return None if value is None else format(value, "f")
+
+
+def _build_s1_004_consumer_contract_view(
+    snapshot: InstrumentMasterSnapshot,
+) -> dict[str, Any]:
+    """Build the stable S1-004 view future consumers can reuse as a test vector."""
+
+    venues_by_id = {venue.venue_id: venue for venue in snapshot.venues}
+    fee_schedules_by_id = {fee.fee_schedule_id: fee for fee in snapshot.fee_schedules}
+    constraints_by_instrument_id = {
+        constraint.instrument_id: constraint for constraint in snapshot.instrument_constraints
+    }
+    sessions_by_venue_id = {
+        venue.venue_id: sorted(
+            session.session_id
+            for session in snapshot.trading_sessions
+            if session.venue_id == venue.venue_id and session.status.value == "active"
+        )
+        for venue in snapshot.venues
+    }
+    paper_account_by_venue_id = {
+        account.venue_id: account
+        for account in snapshot.accounts
+        if account.account_type.value == "paper"
+    }
+
+    ingestion_contracts: list[dict[str, Any]] = []
+    simulator_contracts: list[dict[str, Any]] = []
+    risk_contracts: list[dict[str, Any]] = []
+    gateway_contracts: list[dict[str, Any]] = []
+
+    for instrument in sorted(snapshot.instruments, key=lambda item: item.instrument_id):
+        venue = venues_by_id[instrument.venue_id]
+        fee_schedule = fee_schedules_by_id[instrument.fee_schedule_id]
+        constraint = constraints_by_instrument_id[instrument.instrument_id]
+        paper_account = paper_account_by_venue_id[instrument.venue_id]
+
+        ingestion_contracts.append(
+            {
+                "active_session_ids": sessions_by_venue_id[instrument.venue_id],
+                "base_asset_id": instrument.base_asset_id,
+                "canonical_symbol": instrument.canonical_symbol,
+                "instrument_id": instrument.instrument_id,
+                "market_data_rate_limit_ids": sorted(
+                    rate_limit.rate_limit_id for rate_limit in venue.rate_limits
+                ),
+                "quote_asset_id": instrument.quote_asset_id,
+                "source_id": instrument.source_id,
+                "venue_id": instrument.venue_id,
+                "venue_status": venue.status.value,
+                "venue_symbol": instrument.venue_symbol,
+                "venue_timezone": venue.timezone,
+            }
+        )
+        simulator_contracts.append(
+            {
+                "fee_asset_id": fee_schedule.fee_asset_id,
+                "fee_schedule_id": fee_schedule.fee_schedule_id,
+                "instrument_id": instrument.instrument_id,
+                "lot_size": _decimal_to_contract_string(constraint.lot_size),
+                "maker_fee_rate": _decimal_to_contract_string(fee_schedule.maker_fee_rate),
+                "min_notional": _decimal_to_contract_string(constraint.min_notional),
+                "min_order_quantity": _decimal_to_contract_string(
+                    constraint.min_order_quantity
+                ),
+                "status": instrument.status.value,
+                "supported_order_types": sorted(
+                    order_type.value for order_type in instrument.supported_order_types
+                ),
+                "taker_fee_rate": _decimal_to_contract_string(fee_schedule.taker_fee_rate),
+                "tick_size": _decimal_to_contract_string(constraint.tick_size),
+            }
+        )
+        risk_contracts.append(
+            {
+                "constraint_id": constraint.constraint_id,
+                "instrument_id": instrument.instrument_id,
+                "lot_size": _decimal_to_contract_string(constraint.lot_size),
+                "max_drawdown_pct": _decimal_to_contract_string(
+                    paper_account.risk_limits.max_drawdown_pct
+                ),
+                "max_order_notional_pct": _decimal_to_contract_string(
+                    paper_account.risk_limits.max_order_notional_pct
+                ),
+                "min_cash_reserve_pct": _decimal_to_contract_string(
+                    paper_account.risk_limits.min_cash_reserve_pct
+                ),
+                "min_notional": _decimal_to_contract_string(constraint.min_notional),
+                "min_order_quantity": _decimal_to_contract_string(
+                    constraint.min_order_quantity
+                ),
+                "tick_size": _decimal_to_contract_string(constraint.tick_size),
+            }
+        )
+        gateway_contracts.append(
+            {
+                "account_id": paper_account.account_id,
+                "instrument_id": instrument.instrument_id,
+                "is_derivative": instrument.is_derivative,
+                "key_scope": paper_account.key_scope.value,
+                "leverage_allowed": instrument.leverage_allowed,
+                "live_capital_enabled": paper_account.live_capital_enabled,
+                "margin_allowed": instrument.margin_allowed,
+                "short_selling_allowed": instrument.short_selling_allowed,
+                "supported_order_types": sorted(
+                    order_type.value for order_type in instrument.supported_order_types
+                ),
+                "trading_permissions": sorted(
+                    permission.value for permission in paper_account.trading_permissions
+                ),
+            }
+        )
+
+    return {
+        "created_at": snapshot.created_at.isoformat(),
+        "requirement_trace": ["FR-003", "NFR-005"],
+        "schema_version": snapshot.schema_version,
+        "snapshot_id": snapshot.snapshot_id,
+        "source_id": snapshot.source_id,
+        "source_version": snapshot.source_version,
+        "views": {
+            "gateway": gateway_contracts,
+            "ingestion": ingestion_contracts,
+            "risk": risk_contracts,
+            "simulator": simulator_contracts,
+        },
+    }
+
+
+def _expire_seed_fee_schedule(payload: dict[str, Any]) -> None:
+    payload["created_at"] = "2026-07-01T00:00:00Z"
+    payload["fee_schedules"][0]["effective_to"] = "2026-06-15T00:00:00Z"
+
+
+def _suspend_seed_trading_session(payload: dict[str, Any]) -> None:
+    payload["trading_sessions"][0]["status"] = "suspended"
+
+
+def _expire_seed_instrument_constraint(payload: dict[str, Any]) -> None:
+    payload["created_at"] = "2026-07-01T00:00:00Z"
+    payload["instrument_constraints"][0]["effective_to"] = "2026-06-15T00:00:00Z"
+
+
+def _remove_seed_gateway_limit_order_support(payload: dict[str, Any]) -> None:
+    payload["venues"][0]["supported_order_types"] = ["market"]
 
 
 @pytest.mark.contract
@@ -149,6 +307,143 @@ def test_s1_003_mvp_seed_maps_canonical_instruments_to_venue_symbols() -> None:
     assert seed_account.margin_enabled is False
     assert seed_account.derivatives_enabled is False
     assert seed_account.shorting_enabled is False
+
+
+@pytest.mark.contract
+@pytest.mark.schema
+def test_s1_004_downstream_consumers_can_derive_required_views_from_seed() -> None:
+    payload = _load_json(MVP_SPOT_SEED)
+
+    snapshot = InstrumentMasterSnapshot.model_validate(payload)
+    consumer_view = _build_s1_004_consumer_contract_view(snapshot)
+    views = consumer_view["views"]
+
+    assert set(views) == {"gateway", "ingestion", "risk", "simulator"}
+    assert {record["instrument_id"] for record in views["ingestion"]} == {
+        "COINBASE_SPOT:BTC-USD",
+        "COINBASE_SPOT:ETH-USD",
+        "COINBASE_SPOT:SOL-USD",
+    }
+
+    btc_ingestion_contract = views["ingestion"][0]
+    assert btc_ingestion_contract == {
+        "active_session_ids": ["COINBASE_SPOT_24X7_2026Q2"],
+        "base_asset_id": "BTC",
+        "canonical_symbol": "BTC-USD",
+        "instrument_id": "COINBASE_SPOT:BTC-USD",
+        "market_data_rate_limit_ids": ["COINBASE_SPOT_REST_METADATA"],
+        "quote_asset_id": "USD",
+        "source_id": "S1_003_MAPPING_SEED",
+        "venue_id": "COINBASE_SPOT",
+        "venue_status": "active",
+        "venue_symbol": "BTC-USD",
+        "venue_timezone": "UTC",
+    }
+
+    btc_simulator_contract = views["simulator"][0]
+    assert btc_simulator_contract["maker_fee_rate"] == "0.0060"
+    assert btc_simulator_contract["taker_fee_rate"] == "0.0060"
+    assert btc_simulator_contract["tick_size"] == "0.01"
+    assert btc_simulator_contract["lot_size"] == "0.00000001"
+    assert btc_simulator_contract["min_notional"] == "1.00"
+    assert btc_simulator_contract["supported_order_types"] == ["limit", "market"]
+
+    btc_constraint = next(
+        constraint
+        for constraint in snapshot.instrument_constraints
+        if constraint.instrument_id == "COINBASE_SPOT:BTC-USD"
+    )
+    risk_pass = btc_constraint.evaluate_order(
+        price=Decimal("65000.00"),
+        quantity=Decimal("0.001"),
+    )
+    risk_fail = btc_constraint.evaluate_order(
+        price=Decimal("65000.001"),
+        quantity=Decimal("0.000001"),
+    )
+    assert risk_pass.passed is True
+    assert risk_fail.passed is False
+    assert risk_fail.reason_codes == (
+        ConstraintViolation.PRICE_NOT_ON_TICK,
+        ConstraintViolation.NOTIONAL_BELOW_MINIMUM,
+    )
+    assert views["risk"][0] == {
+        "constraint_id": "COINBASE_SPOT:BTC-USD:CONSTRAINTS:2026Q2",
+        "instrument_id": "COINBASE_SPOT:BTC-USD",
+        "lot_size": "0.00000001",
+        "max_drawdown_pct": "0.08",
+        "max_order_notional_pct": "0.025",
+        "min_cash_reserve_pct": "0.30",
+        "min_notional": "1.00",
+        "min_order_quantity": "0.00000001",
+        "tick_size": "0.01",
+    }
+
+    btc_gateway_contract = views["gateway"][0]
+    assert btc_gateway_contract["account_id"] == "PAPER_COINBASE_SPOT_001"
+    assert btc_gateway_contract["key_scope"] == "paper_trade"
+    assert btc_gateway_contract["live_capital_enabled"] is False
+    assert btc_gateway_contract["is_derivative"] is False
+    assert btc_gateway_contract["margin_allowed"] is False
+    assert btc_gateway_contract["short_selling_allowed"] is False
+    assert btc_gateway_contract["leverage_allowed"] is False
+    assert btc_gateway_contract["supported_order_types"] == ["limit", "market"]
+    assert btc_gateway_contract["trading_permissions"] == [
+        "cancel_orders",
+        "place_orders",
+        "read_market_data",
+        "view_balances",
+    ]
+
+
+@pytest.mark.contract
+@pytest.mark.schema
+def test_s1_004_consumer_contract_view_is_reproducible() -> None:
+    payload = _load_json(MVP_SPOT_SEED)
+
+    snapshot = InstrumentMasterSnapshot.model_validate(payload)
+    consumer_view = _build_s1_004_consumer_contract_view(snapshot)
+
+    assert (
+        _consumer_contract_digest(consumer_view)
+        == "f5d0694b5ed521e28158b91851a1aac2534b7129b1e09bfe3545c7c687b35b68"
+    )
+
+
+@pytest.mark.contract
+@pytest.mark.schema
+@pytest.mark.parametrize(
+    ("mutate_payload", "expected_error"),
+    [
+        (
+            _expire_seed_fee_schedule,
+            "without active effective-dated fee schedules",
+        ),
+        (
+            _suspend_seed_trading_session,
+            "no active effective-dated trading session",
+        ),
+        (
+            _expire_seed_instrument_constraint,
+            "must have exactly one active effective-dated constraint",
+        ),
+        (
+            _remove_seed_gateway_limit_order_support,
+            "venue-unsupported order types",
+        ),
+    ],
+)
+def test_s1_004_downstream_consumers_fail_closed_on_missing_required_metadata(
+    mutate_payload: PayloadMutator,
+    expected_error: str,
+) -> None:
+    payload = deepcopy(_load_json(MVP_SPOT_SEED))
+    mutate_payload(payload)
+
+    with pytest.raises(ValidationError) as exc_info:
+        InstrumentMasterSnapshot.model_validate(payload)
+
+    assert expected_error in str(exc_info.value)
 
 
 @pytest.mark.contract
