@@ -19,6 +19,7 @@ This repository contains a complete project model for a validation-first, asset-
 | `11_tech_stack_and_docker.md` | Early technical stack choice and Docker/Compose runtime plan. |
 | `12_sprint_execution_playbook.md` | Sprint operating mechanics, evidence packets, QA approach, and integration playbook. |
 | `13_github_issue_backlog.md` | GitHub milestone, label, issue, and requirement-coverage pack. |
+| `decision_records/` | Sprint and governance decision records for scope, universe, benchmarks, sources, stack, and gate assumptions. |
 | `rules/00_delivery_anti_drift_rules.md` | Binding anti-drift rules for scope, stack, validation, QA, integration, and model/data drift. |
 
 ## GitHub workflow aids
