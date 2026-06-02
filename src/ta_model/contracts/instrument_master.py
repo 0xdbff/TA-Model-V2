@@ -2,20 +2,23 @@
 
 Traceability:
 - FR-003: normalize symbols, assets, venues, tick size, lot size, min notional, and fees.
+- FR-010: provide fail-closed metadata prerequisites for independent pre-trade controls.
 - NFR-004: preserve auditability with traceable decision/order metadata prerequisites.
 
 Scope:
-- S1-001 implements Pydantic v2 schemas and fixture-testable validation only.
+- S1-001 implements canonical asset, venue, instrument, account, and snapshot schemas.
+- S1-002 adds effective-dated fee schedules, venue sessions, and instrument constraints.
 - No connector, data pull, paper gateway, live capital, leverage, margin, shorting,
   derivatives, or autonomous model promotion path is introduced here.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from datetime import datetime, time
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Literal, Protocol, Self, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -49,7 +52,19 @@ Symbol = Annotated[
 ]
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 PositiveDecimal = Annotated[Decimal, Field(gt=Decimal("0"))]
+NonNegativeDecimal = Annotated[Decimal, Field(ge=Decimal("0"))]
+BoundedFeeRate = Annotated[Decimal, Field(ge=Decimal("0"), le=Decimal("0.05"))]
 BoundedRiskFraction = Annotated[Decimal, Field(gt=Decimal("0"), le=Decimal("1"))]
+
+
+class EffectiveDated(Protocol):
+    """Protocol for records with half-open effective-time windows."""
+
+    effective_from: datetime
+    effective_to: datetime | None
+
+
+TEffective = TypeVar("TEffective", bound=EffectiveDated)
 
 
 class ContractModel(BaseModel):
@@ -156,6 +171,39 @@ class OrderType(StrEnum):
     MARKET = "market"
     LIMIT = "limit"
     POST_ONLY_LIMIT = "post_only_limit"
+
+
+class DayOfWeek(StrEnum):
+    """Normalized trading-session day names."""
+
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+
+class TradingSessionStatus(StrEnum):
+    """Effective-dated venue-session status used by fail-closed consumers."""
+
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    UNKNOWN = "unknown"
+
+
+class ConstraintViolation(StrEnum):
+    """Machine-readable instrument-constraint validation reason codes."""
+
+    NON_POSITIVE_PRICE = "non_positive_price"
+    NON_POSITIVE_QUANTITY = "non_positive_quantity"
+    PRICE_NOT_ON_TICK = "price_not_on_tick"
+    QUANTITY_NOT_ON_LOT = "quantity_not_on_lot"
+    QUANTITY_BELOW_MINIMUM = "quantity_below_minimum"
+    QUANTITY_ABOVE_MAXIMUM = "quantity_above_maximum"
+    NOTIONAL_BELOW_MINIMUM = "notional_below_minimum"
+    NOTIONAL_ABOVE_MAXIMUM = "notional_above_maximum"
 
 
 class InstrumentType(StrEnum):
@@ -314,6 +362,174 @@ class Venue(SourceStampedModel):
         return value
 
 
+class FeeSchedule(SourceStampedModel):
+    """Effective-dated trading fee schedule for cost and risk consumers.
+
+    Rates are non-negative fractions of notional. Rebates are intentionally not
+    represented in the MVP contract so early simulations and risk checks do not
+    depend on optimistic negative-cost assumptions.
+    """
+
+    schema_version: Literal["fee-schedule.v1"] = "fee-schedule.v1"
+    fee_schedule_id: CanonicalId
+    venue_id: CanonicalId
+    fee_tier_id: CanonicalId
+    maker_fee_rate: BoundedFeeRate
+    taker_fee_rate: BoundedFeeRate
+    fee_asset_id: CanonicalId | None = Field(
+        default=None,
+        description="Asset used for fixed/minimum fees when applicable.",
+    )
+    min_fee: NonNegativeDecimal = Decimal("0")
+    effective_from: AwareDatetime
+    effective_to: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_fee_schedule_window(self) -> Self:
+        _validate_effective_window(
+            self.effective_from,
+            self.effective_to,
+            "fee schedule",
+        )
+        if self.min_fee > 0 and self.fee_asset_id is None:
+            raise ValueError("fee_asset_id is required when min_fee is greater than zero")
+        return self
+
+
+class TradingSession(SourceStampedModel):
+    """Effective-dated venue session contract.
+
+    Sessions are venue-level metadata so ingestion, simulator, risk, and gateway
+    consumers can fail closed when no active trading window is known.
+    """
+
+    schema_version: Literal["trading-session.v1"] = "trading-session.v1"
+    session_id: CanonicalId
+    venue_id: CanonicalId
+    name: NonEmptyString
+    timezone: NonEmptyString
+    days_of_week: frozenset[DayOfWeek] = Field(min_length=1)
+    is_24x7: bool = False
+    open_time: time | None = None
+    close_time: time | None = None
+    status: TradingSessionStatus
+    effective_from: AwareDatetime
+    effective_to: AwareDatetime | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_must_be_valid_iana_name(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"timezone must be a valid IANA timezone: {value}") from exc
+        return value
+
+    @model_validator(mode="after")
+    def validate_session_window(self) -> Self:
+        _validate_effective_window(
+            self.effective_from,
+            self.effective_to,
+            "trading session",
+        )
+
+        if self.is_24x7:
+            if self.days_of_week != frozenset(DayOfWeek):
+                raise ValueError("24x7 trading sessions must include every day of week")
+            if self.open_time is not None or self.close_time is not None:
+                raise ValueError("24x7 trading sessions must not set open_time or close_time")
+            return self
+
+        if self.open_time is None or self.close_time is None:
+            raise ValueError("non-24x7 trading sessions require open_time and close_time")
+        if self.open_time == self.close_time:
+            raise ValueError("open_time and close_time must differ for non-24x7 sessions")
+        return self
+
+
+class ConstraintValidationResult(ContractModel):
+    """Deterministic result from validating a proposed order against constraints."""
+
+    instrument_id: CanonicalId
+    constraint_id: CanonicalId
+    price: Decimal
+    quantity: Decimal
+    notional: Decimal
+    passed: bool
+    reason_codes: tuple[ConstraintViolation, ...]
+
+
+class InstrumentConstraint(SourceStampedModel):
+    """Effective-dated tick, lot, and notional constraints for an instrument."""
+
+    schema_version: Literal["instrument-constraint.v1"] = "instrument-constraint.v1"
+    constraint_id: CanonicalId
+    instrument_id: CanonicalId
+    tick_size: PositiveDecimal
+    lot_size: PositiveDecimal
+    min_notional: PositiveDecimal
+    min_order_quantity: PositiveDecimal | None = None
+    max_order_quantity: PositiveDecimal | None = None
+    max_order_notional: PositiveDecimal | None = None
+    effective_from: AwareDatetime
+    effective_to: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_constraint_window_and_bounds(self) -> Self:
+        _validate_effective_window(
+            self.effective_from,
+            self.effective_to,
+            "instrument constraint",
+        )
+        if (
+            self.min_order_quantity is not None
+            and self.max_order_quantity is not None
+            and self.max_order_quantity < self.min_order_quantity
+        ):
+            raise ValueError("max_order_quantity cannot be below min_order_quantity")
+        if self.max_order_notional is not None and self.max_order_notional < self.min_notional:
+            raise ValueError("max_order_notional cannot be below min_notional")
+        return self
+
+    def evaluate_order(self, *, price: Decimal, quantity: Decimal) -> ConstraintValidationResult:
+        """Validate a proposed price/quantity against venue instrument constraints."""
+
+        reason_codes: list[ConstraintViolation] = []
+        notional = price * quantity
+
+        if price <= 0:
+            reason_codes.append(ConstraintViolation.NON_POSITIVE_PRICE)
+        elif not _is_decimal_multiple(price, self.tick_size):
+            reason_codes.append(ConstraintViolation.PRICE_NOT_ON_TICK)
+
+        if quantity <= 0:
+            reason_codes.append(ConstraintViolation.NON_POSITIVE_QUANTITY)
+        else:
+            minimum_quantity = self.min_order_quantity or self.lot_size
+            if quantity < minimum_quantity:
+                reason_codes.append(ConstraintViolation.QUANTITY_BELOW_MINIMUM)
+            if not _is_decimal_multiple(quantity, self.lot_size):
+                reason_codes.append(ConstraintViolation.QUANTITY_NOT_ON_LOT)
+            if self.max_order_quantity is not None and quantity > self.max_order_quantity:
+                reason_codes.append(ConstraintViolation.QUANTITY_ABOVE_MAXIMUM)
+
+        if price > 0 and quantity > 0:
+            if notional < self.min_notional:
+                reason_codes.append(ConstraintViolation.NOTIONAL_BELOW_MINIMUM)
+            if self.max_order_notional is not None and notional > self.max_order_notional:
+                reason_codes.append(ConstraintViolation.NOTIONAL_ABOVE_MAXIMUM)
+
+        return ConstraintValidationResult(
+            instrument_id=self.instrument_id,
+            constraint_id=self.constraint_id,
+            price=price,
+            quantity=quantity,
+            notional=notional,
+            passed=not reason_codes,
+            reason_codes=tuple(reason_codes),
+        )
+
+
 class Instrument(SourceStampedModel):
     """Venue-specific tradable instrument mapped to canonical assets."""
 
@@ -415,6 +631,9 @@ class InstrumentMasterSnapshot(SourceStampedModel):
     created_at: AwareDatetime
     assets: tuple[Asset, ...] = Field(min_length=1)
     venues: tuple[Venue, ...] = Field(min_length=1)
+    fee_schedules: tuple[FeeSchedule, ...] = Field(min_length=1)
+    trading_sessions: tuple[TradingSession, ...] = Field(min_length=1)
+    instrument_constraints: tuple[InstrumentConstraint, ...] = Field(min_length=1)
     instruments: tuple[Instrument, ...] = Field(min_length=1)
     accounts: tuple[Account, ...] = Field(default_factory=tuple)
 
@@ -423,14 +642,47 @@ class InstrumentMasterSnapshot(SourceStampedModel):
         asset_ids = {asset.asset_id for asset in self.assets}
         venue_ids = {venue.venue_id for venue in self.venues}
         venue_order_types = {venue.venue_id: venue.supported_order_types for venue in self.venues}
+        instrument_ids = {instrument.instrument_id for instrument in self.instruments}
+        fee_schedule_ids = {fee_schedule.fee_schedule_id for fee_schedule in self.fee_schedules}
+        fee_schedule_refs_by_venue = {
+            (fee_schedule.venue_id, fee_schedule.fee_schedule_id)
+            for fee_schedule in self.fee_schedules
+        }
+        fee_tier_refs_by_venue = {
+            (fee_schedule.venue_id, fee_schedule.fee_tier_id)
+            for fee_schedule in self.fee_schedules
+        }
 
         self._raise_on_duplicates((asset.asset_id for asset in self.assets), "asset_id")
         self._raise_on_duplicates((venue.venue_id for venue in self.venues), "venue_id")
+        self._raise_on_duplicates(
+            (fee_schedule.fee_schedule_id for fee_schedule in self.fee_schedules),
+            "fee_schedule_id",
+        )
+        self._raise_on_duplicates(
+            (session.session_id for session in self.trading_sessions),
+            "trading_session_id",
+        )
+        self._raise_on_duplicates(
+            (constraint.constraint_id for constraint in self.instrument_constraints),
+            "instrument_constraint_id",
+        )
         self._raise_on_duplicates(
             (instrument.instrument_id for instrument in self.instruments),
             "instrument_id",
         )
         self._raise_on_duplicates((account.account_id for account in self.accounts), "account_id")
+
+        _raise_on_overlapping_effective_windows(
+            self.fee_schedules,
+            key_func=lambda fee_schedule: f"{fee_schedule.venue_id}/{fee_schedule.fee_tier_id}",
+            label="fee schedule",
+        )
+        _raise_on_overlapping_effective_windows(
+            self.instrument_constraints,
+            key_func=lambda constraint: constraint.instrument_id,
+            label="instrument constraint",
+        )
 
         unknown_asset_refs = sorted(
             {
@@ -461,6 +713,122 @@ class InstrumentMasterSnapshot(SourceStampedModel):
         if unknown_account_venues:
             raise ValueError(f"accounts reference unknown venue_id(s): {unknown_account_venues}")
 
+        unknown_fee_schedule_venues = sorted(
+            {
+                fee_schedule.venue_id
+                for fee_schedule in self.fee_schedules
+                if fee_schedule.venue_id not in venue_ids
+            }
+        )
+        if unknown_fee_schedule_venues:
+            raise ValueError(
+                f"fee schedules reference unknown venue_id(s): {unknown_fee_schedule_venues}"
+            )
+
+        unknown_fee_assets = sorted(
+            {
+                fee_schedule.fee_asset_id
+                for fee_schedule in self.fee_schedules
+                if fee_schedule.fee_asset_id is not None
+                and fee_schedule.fee_asset_id not in asset_ids
+            }
+        )
+        if unknown_fee_assets:
+            raise ValueError(
+                f"fee schedules reference unknown fee_asset_id(s): {unknown_fee_assets}"
+            )
+
+        unknown_session_venues = sorted(
+            {
+                session.venue_id
+                for session in self.trading_sessions
+                if session.venue_id not in venue_ids
+            }
+        )
+        if unknown_session_venues:
+            raise ValueError(
+                f"trading sessions reference unknown venue_id(s): {unknown_session_venues}"
+            )
+
+        unknown_constraint_instruments = sorted(
+            {
+                constraint.instrument_id
+                for constraint in self.instrument_constraints
+                if constraint.instrument_id not in instrument_ids
+            }
+        )
+        if unknown_constraint_instruments:
+            raise ValueError(
+                "instrument constraints reference unknown instrument_id(s): "
+                f"{unknown_constraint_instruments}"
+            )
+
+        unknown_instrument_fee_schedules = sorted(
+            {
+                instrument.fee_schedule_id
+                for instrument in self.instruments
+                if instrument.fee_schedule_id not in fee_schedule_ids
+            }
+        )
+        if unknown_instrument_fee_schedules:
+            raise ValueError(
+                "instruments reference unknown fee_schedule_id(s): "
+                f"{unknown_instrument_fee_schedules}"
+            )
+
+        accounts_without_fee_schedule = sorted(
+            {
+                account.account_id
+                for account in self.accounts
+                if (account.venue_id, account.fee_tier_id) not in fee_schedule_refs_by_venue
+                and (account.venue_id, account.fee_tier_id) not in fee_tier_refs_by_venue
+            }
+        )
+        if accounts_without_fee_schedule:
+            raise ValueError(
+                "accounts reference fee_tier_id values without venue fee schedules: "
+                f"{accounts_without_fee_schedule}"
+            )
+
+        accounts_without_active_fee_schedule = sorted(
+            {
+                account.account_id
+                for account in self.accounts
+                if not any(
+                    fee_schedule.venue_id == account.venue_id
+                    and (
+                        account.fee_tier_id
+                        in {fee_schedule.fee_schedule_id, fee_schedule.fee_tier_id}
+                    )
+                    and _is_effective(fee_schedule, self.created_at)
+                    for fee_schedule in self.fee_schedules
+                )
+            }
+        )
+        if accounts_without_active_fee_schedule:
+            raise ValueError(
+                "accounts reference fee_tier_id values without active effective-dated "
+                f"fee schedules at snapshot time: {accounts_without_active_fee_schedule}"
+            )
+
+        missing_active_session_venues = sorted(
+            {
+                venue.venue_id
+                for venue in self.venues
+                if not any(
+                    session.venue_id == venue.venue_id
+                    and session.status is TradingSessionStatus.ACTIVE
+                    and _is_effective(session, self.created_at)
+                    for session in self.trading_sessions
+                )
+            }
+        )
+        if missing_active_session_venues:
+            raise ValueError(
+                "venues have no active effective-dated trading session at snapshot time: "
+                f"{missing_active_session_venues}"
+            )
+
         for instrument in self.instruments:
             unsupported_order_types = (
                 instrument.supported_order_types - venue_order_types[instrument.venue_id]
@@ -472,6 +840,41 @@ class InstrumentMasterSnapshot(SourceStampedModel):
                     f"{unsupported}"
                 )
 
+            active_fee_schedules = [
+                fee_schedule
+                for fee_schedule in self.fee_schedules
+                if fee_schedule.fee_schedule_id == instrument.fee_schedule_id
+                and fee_schedule.venue_id == instrument.venue_id
+                and _is_effective(fee_schedule, self.created_at)
+            ]
+            if len(active_fee_schedules) != 1:
+                raise ValueError(
+                    f"instrument {instrument.instrument_id} must reference exactly one active "
+                    "effective-dated fee schedule at snapshot time"
+                )
+
+            active_constraints = [
+                constraint
+                for constraint in self.instrument_constraints
+                if constraint.instrument_id == instrument.instrument_id
+                and _is_effective(constraint, self.created_at)
+            ]
+            if len(active_constraints) != 1:
+                raise ValueError(
+                    f"instrument {instrument.instrument_id} must have exactly one active "
+                    "effective-dated constraint at snapshot time"
+                )
+            active_constraint = active_constraints[0]
+            if (
+                instrument.tick_size != active_constraint.tick_size
+                or instrument.lot_size != active_constraint.lot_size
+                or instrument.min_notional != active_constraint.min_notional
+            ):
+                raise ValueError(
+                    f"instrument {instrument.instrument_id} tick_size/lot_size/min_notional "
+                    "does not match active effective-dated constraint"
+                )
+
         return self
 
     @staticmethod
@@ -479,6 +882,45 @@ class InstrumentMasterSnapshot(SourceStampedModel):
         duplicates = sorted(_duplicates(values))
         if duplicates:
             raise ValueError(f"duplicate {field_name} value(s): {duplicates}")
+
+
+def _validate_effective_window(
+    effective_from: datetime,
+    effective_to: datetime | None,
+    record_name: str,
+) -> None:
+    if effective_to is not None and effective_to <= effective_from:
+        raise ValueError(f"{record_name} effective_to must be after effective_from")
+
+
+def _is_effective(record: EffectiveDated, as_of: datetime) -> bool:
+    return record.effective_from <= as_of and (
+        record.effective_to is None or as_of < record.effective_to
+    )
+
+
+def _raise_on_overlapping_effective_windows(
+    records: Iterable[TEffective],
+    *,
+    key_func: Callable[[TEffective], str],
+    label: str,
+) -> None:
+    windows_by_key: dict[str, list[TEffective]] = {}
+    for record in records:
+        windows_by_key.setdefault(key_func(record), []).append(record)
+
+    for key, windows in windows_by_key.items():
+        previous: TEffective | None = None
+        for current in sorted(windows, key=lambda record: record.effective_from):
+            if previous is not None:
+                previous_end = previous.effective_to
+                if previous_end is None or current.effective_from < previous_end:
+                    raise ValueError(f"overlapping effective windows for {label} {key}")
+            previous = current
+
+
+def _is_decimal_multiple(value: Decimal, increment: Decimal) -> bool:
+    return increment > 0 and value % increment == 0
 
 
 def _duplicates(values: Iterable[str]) -> set[str]:
