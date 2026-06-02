@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Sprint / issues | `S1-001` / GitHub Issue `#7`; `S1-002` / GitHub Issue `#8` |
+| Sprint / issues | `S1-001` / GitHub Issue `#7`; `S1-002` / GitHub Issue `#8`; `S1-003` / GitHub Issue `#9` |
 | Requirement trace | `FR-003`, `FR-010`, `NFR-004` |
 | Contract touched | Canonical asset, venue, fee schedule, trading session, instrument constraint, instrument, account, and instrument-master snapshot metadata |
 | Docker/runtime impact | No runtime service or Docker Compose profile is changed. The future executable test boundary is the approved `dev` / `app-dev` profile once Compose exists. |
-| Acceptance evidence | Pydantic schema tests, invalid-record fixtures under `tests/fixtures/instrument_master/`, and the S1-002 constraint validation report under `docs/reports/gates/` |
+| Acceptance evidence | Pydantic schema tests, invalid-record fixtures under `tests/fixtures/instrument_master/`, `configs/instrument_master/mvp_spot_seed.json`, and the S1-002/S1-003 reports under `docs/reports/gates/` |
 
 ## Contract summary
 
@@ -34,6 +34,21 @@ The implementation in `src/ta_model/contracts/instrument_master.py` defines Pyda
 - Account validation requires least-privilege paper/simulation/research account types, explicit `false` live-capital and withdrawal flags, and hard risk-limit caps aligned with the S0 risk policy.
 - All metadata records carry `source_id`, optional `source_version`, and `metadata_ts` for audit and future source-register traceability.
 
+## S1-003 MVP mapping seed
+
+`configs/instrument_master/mvp_spot_seed.json` is the current S1 seed snapshot for
+the locked MVP spot universe. It maps the canonical instruments
+`COINBASE_SPOT:BTC-USD`, `COINBASE_SPOT:ETH-USD`, and `COINBASE_SPOT:SOL-USD` to
+their venue-specific Coinbase spot symbols with base/quote assets, active fee
+schedule references, 24x7 session metadata, tick sizes, lot sizes, min notionals,
+and explicit no-derivative/no-margin/no-short/no-leverage flags.
+
+The seed is contract/configuration evidence only. Because the source/license
+register still marks the Coinbase source candidate as blocked pending review, the
+mapping does not authorize ingestion, retained venue data, paper trading, or
+validation claims. The corresponding acceptance report is
+`docs/reports/gates/S1-003_mvp_instrument_mapping_report.md`.
+
 ## Scope boundaries
 
-This contract work does **not** implement source approval, database migrations, connectors, risk-engine execution, gateway behavior, paper trading, live capital, leverage, margin, derivatives, shorting, market making, or autonomous model self-promotion. The S1-002 fixture values are contract evidence only; source-approved production metadata and mapping reports remain separate delivery evidence before ingestion or paper use.
+This contract work does **not** implement source approval, database migrations, connectors, risk-engine execution, gateway behavior, paper trading, live capital, leverage, margin, derivatives, shorting, market making, or autonomous model self-promotion. The S1-002 fixture and S1-003 seed values are contract/configuration evidence only; source-approved production metadata remains separate delivery evidence before ingestion or paper use.

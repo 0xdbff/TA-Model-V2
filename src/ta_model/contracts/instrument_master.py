@@ -8,6 +8,7 @@ Traceability:
 Scope:
 - S1-001 implements canonical asset, venue, instrument, account, and snapshot schemas.
 - S1-002 adds effective-dated fee schedules, venue sessions, and instrument constraints.
+- S1-003 seeds candidate-only MVP spot mappings from canonical IDs to venue symbols.
 - No connector, data pull, paper gateway, live capital, leverage, margin, shorting,
   derivatives, or autonomous model promotion path is introduced here.
 """
