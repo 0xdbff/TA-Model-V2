@@ -1,0 +1,113 @@
+name: Implementation Work
+description: Traceable implementation task with validation and anti-drift controls
+title: "Sx: "
+labels:
+  - type:implementation
+  - evidence-required
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What user/system outcome will this issue deliver?
+      placeholder: "Implement ... so that ..."
+    validations:
+      required: true
+  - type: input
+    id: milestone
+    attributes:
+      label: Sprint or stage
+      placeholder: "S0 Build readiness"
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirement trace
+      description: Link catalog FR/NFR IDs from docs/02_requirements_catalog.csv plus US/RISK IDs as needed, or provide an enabling-infrastructure rationale.
+      placeholder: "FR-003, NFR-005, RISK-013"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope boundaries
+      description: What is explicitly in scope and out of scope?
+      placeholder: "In: ... / Out: ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: contract
+    attributes:
+      label: Primary contract touched
+      options:
+        - None / governance only
+        - Data connector
+        - Instrument master
+        - Feature
+        - Dataset
+        - Forecast/model output
+        - Decision
+        - Risk check
+        - Execution gateway
+        - TCA
+        - Trace/audit
+        - Observability/alert
+    validations:
+      required: true
+  - type: textarea
+    id: docker
+    attributes:
+      label: Docker/runtime impact
+      description: Name affected Compose profile/service, or say no runtime impact.
+      placeholder: "Profile: core/research/paper; Service: ..."
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and QA evidence
+      description: Tests, reports, scenarios, metrics, or artifacts required before done.
+      placeholder: "Unit tests; schema tests; gate report; run ID; dashboard smoke..."
+    validations:
+      required: true
+  - type: textarea
+    id: integration
+    attributes:
+      label: Integration path
+      description: Lowest-risk path that will exercise this work.
+      placeholder: "Fixture → historical simulation → shadow live → paper"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and handoffs
+      description: Prerequisites, follow-on issues, or blocked gates.
+      placeholder: "Depends on S1-001; hands off to S2-002"
+  - type: checkboxes
+    id: anti_drift
+    attributes:
+      label: Anti-drift checklist
+      options:
+        - label: Requirement IDs or enabling rationale are included.
+          required: true
+        - label: "Required label families are assigned: priority, type, area, gate, and sprint/stage."
+          required: true
+        - label: Work stays inside MVP scope unless an ADR/approval is linked.
+          required: true
+        - label: No live-capital, leverage, derivatives, or online self-promotion path is introduced.
+          required: true
+        - label: Docker/runtime impact is documented.
+          required: true
+        - label: Evidence required for completion is objective and reproducible.
+          required: true
+        - label: Failure cases are included where applicable.
+          required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      placeholder: "Done when ..."
+    validations:
+      required: true

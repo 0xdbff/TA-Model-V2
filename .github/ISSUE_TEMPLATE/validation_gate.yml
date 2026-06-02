@@ -1,0 +1,109 @@
+name: Validation Gate Review
+description: Gate review issue for evidence, blockers, and approval
+title: "Gate: "
+labels:
+  - type:validation
+  - evidence-required
+  - blocks-promotion
+body:
+  - type: dropdown
+    id: gate
+    attributes:
+      label: Gate
+      options:
+        - Build readiness
+        - Data gate
+        - Leakage gate
+        - Baseline gate
+        - Model gate
+        - Simulation gate
+        - Strategy gate
+        - Risk gate
+        - Paper gate
+        - Audit gate
+        - Compliance gate
+        - Limited-live readiness gate
+    validations:
+      required: true
+  - type: input
+    id: sprint
+    attributes:
+      label: Sprint or stage
+      placeholder: "S4 Features and datasets"
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirement coverage
+      description: Use catalog FR/NFR IDs from docs/02_requirements_catalog.csv for traceability; add spec sections only as context.
+      placeholder: "FR-004, FR-006, NFR-001"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope reviewed
+      description: Include what is explicitly not covered.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence artifacts
+      description: Link reports, CI runs, run IDs, trace IDs, dashboard screenshots, or checklist files.
+    validations:
+      required: true
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Metrics vs thresholds
+      placeholder: "Metric | threshold | observed | pass/fail"
+    validations:
+      required: true
+  - type: textarea
+    id: failures
+    attributes:
+      label: Failures, defects, and blockers
+      placeholder: "Known failures, severity, owner, next action"
+  - type: checkboxes
+    id: stop_line
+    attributes:
+      label: Stop-the-line checks
+      options:
+        - label: No known lookahead leakage is present.
+          required: true
+        - label: No unapproved data source or license issue is present.
+          required: true
+        - label: No secrets are committed, logged, or embedded in images.
+          required: true
+        - label: No risk/kill-switch bypass is present.
+          required: true
+        - label: No live-capital path is introduced before approval.
+          required: true
+        - label: No duplicate order exposure is present in simulator/paper evidence.
+          required: true
+        - label: Required sampled decisions replay successfully.
+          required: true
+        - label: Benchmark, risk, cost, and threshold assumptions were not moved after the run began.
+          required: true
+        - label: P1/P2 work has not displaced incomplete P0 safety or validation controls.
+          required: true
+  - type: dropdown
+    id: decision
+    attributes:
+      label: Gate decision
+      options:
+        - Pass
+        - Conditional pass
+        - Fail
+        - Hold / more evidence required
+    validations:
+      required: true
+  - type: textarea
+    id: approvals
+    attributes:
+      label: Owner approvals and next actions
+      placeholder: "Owner, decision timestamp, next actions"
+    validations:
+      required: true

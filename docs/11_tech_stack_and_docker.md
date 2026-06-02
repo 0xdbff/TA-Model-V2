@@ -1,0 +1,128 @@
+# Technical Stack and Docker Plan
+
+**Document status:** early stack decision for implementation planning
+**Purpose:** choose a practical stack before implementation starts, so sprint work and GitHub issues do not drift into incompatible tools.
+**Non-duplication note:** this document does not restate product requirements. It turns the current spec into default technology, runtime, and Docker decisions.
+
+---
+
+## 1. Stack decision summary
+
+Use a **Python-first, Dockerized, event-time, validation-first stack**.
+
+| Layer | Selected default | Why |
+|---|---|---|
+| Primary language | Python 3.12 | Strong data/ML ecosystem; fastest path to ingestion, features, modeling, simulation, and paper trading. |
+| Dependency/build | `uv`, `pyproject.toml`, locked dependencies | Fast reproducible Python environments; works well in Docker and CI. |
+| APIs/CLIs | FastAPI, Pydantic v2, Typer | Typed contracts for services and CLI workflows; clean validation for event schemas. |
+| Dataframes/query | Polars, PyArrow, DuckDB | Efficient local/batch analytics, Parquet snapshots, leakage-safe dataset generation. |
+| Relational/time-series store | PostgreSQL 16 with TimescaleDB extension | Durable metadata, orders, risk state, audit records, and time-series querying in one Dockerized service. |
+| Object/artifact store | S3-compatible storage via MinIO locally | Immutable bronze payloads, dataset snapshots, model artifacts, reports, and replay evidence. |
+| Experiment/model registry | MLflow with PostgreSQL backend and object-store artifacts | Reproducible experiments, model registry states, metrics, artifacts, and rollback pointers. |
+| Workflow orchestration | Prefect | Python-native scheduled/backfill/training/paper workflows without adopting heavyweight infra early. |
+| Event bus | Redpanda/Kafka-compatible event stream | Local Docker-compatible stream for market events, paper trading, and integration tests. |
+| ML/modeling | scikit-learn + LightGBM for baselines; PyTorch for sequence/transformer candidates | Baselines first; deep model only after baseline/evaluation harness exists. |
+| Validation/testing | pytest, Hypothesis, Pandera, Pydantic schema tests | Unit, property, dataframe, event-contract, and leakage checks. |
+| Observability | OpenTelemetry, Prometheus, Grafana, structured JSON logs | Metrics, traces, latency, dashboards, and alert-ready telemetry. |
+| Security checks | detect-secrets, Trivy, dependency audit in CI | Secret and supply-chain checks before runtime expansion. |
+| Containerization | Docker + Docker Compose profiles | Reproducible local, CI, research, simulation, and paper environments. |
+
+---
+
+## 2. Deliberately deferred stack choices
+
+These are blocked unless an issue/ADR proves they are needed:
+
+| Deferred tool/scope | Default decision |
+|---|---|
+| Kubernetes | Defer until P1/P2 deployment scale requires it. Compose is enough for MVP local/CI/paper. |
+| Feast or heavy managed feature store | Defer. Use versioned feature definitions, Parquet snapshots, DuckDB/Polars, and registry metadata first. |
+| Ray/Dask/Spark | Defer until backtest/training throughput evidence exceeds Polars/DuckDB/single-node limits. |
+| Full web UI | Defer. Use reports, dashboards, and APIs first; add UI only when operator workflow demands it. |
+| Online learning framework | Prohibited for live impact in MVP. Shadow candidates only. |
+| Derivatives/margin-specific systems | Defer to P2 and only after derivative-specific controls exist. |
+
+---
+
+## 3. Docker runtime topology
+
+Docker is the default runtime boundary from Sprint 0 onward. Compose profiles should be introduced incrementally; not every service must exist on day one.
+
+| Compose service | Profile | Purpose | Data durability |
+|---|---|---|---|
+| `app-dev` | `dev` | Developer/test container with repo mounted; runs lint, tests, fixtures, CLIs. | Ephemeral; source mounted. |
+| `api` | `paper`, `ops` | FastAPI service for health, config, risk state, kill switch, registry lookup, and operator APIs. | PostgreSQL-backed. |
+| `worker` | `research`, `paper` | Prefect worker for backfills, feature jobs, simulations, training, paper loops. | PostgreSQL/MinIO-backed. |
+| `postgres` | `core` | Metadata, instrument master, configs, orders, risk state, audit, Timescale hypertables. | Named volume; backups required before real paper evidence. |
+| `minio` | `core` | Raw payloads, Parquet snapshots, MLflow artifacts, validation reports. | Named volume; immutable-object policy where practical. |
+| `mlflow` | `research` | Experiment tracker and model registry. | PostgreSQL backend + MinIO artifacts. |
+| `redpanda` | `stream`, `paper` | Market event and paper-event bus. | Named volume for integration/paper runs. |
+| `prometheus` | `observability` | Metrics scrape and alert-ready telemetry. | Named volume for paper windows. |
+| `grafana` | `observability` | Data/model/strategy/portfolio/execution dashboards. | Named volume; dashboard JSON committed. |
+
+### Required Docker profiles
+
+| Profile | Minimum use |
+|---|---|
+| `dev` | Run local tests, schema checks, and fixture simulations without host-specific setup. |
+| `core` | Start PostgreSQL/TimescaleDB and MinIO for durable local/integration state. |
+| `research` | Run backfills, feature builds, baselines, training, MLflow, and report generation. |
+| `stream` | Run event bus and connector stream integration tests. |
+| `paper` | Run live-data-to-paper loop with risk, paper gateway, TCA, telemetry, and audit trail. |
+| `observability` | Run Prometheus/Grafana dashboards and alert smoke tests. |
+
+---
+
+## 4. Containerization rules
+
+1. Use multi-stage Dockerfiles for app images once application code exists.
+2. Run containers as non-root wherever possible.
+3. Do not bake credentials, API keys, exchange secrets, or data licenses into images.
+4. Use `.env.example` for local shape only; real secrets must come from Docker secrets, environment injection, or an approved secrets manager.
+5. Every service that can affect paper/live behavior must have a healthcheck.
+6. CI should build the app image and run tests inside Docker before paper-readiness work begins.
+7. Paper-mode Compose must not mount developer notebooks with trading credentials.
+8. Research containers must not have live-execution keys.
+9. Runtime records must capture code commit, dependency lock hash, config hash, and container image tag/digest where practical.
+
+---
+
+## 5. Data and artifact layout
+
+Use storage paths that support immutable snapshots and replay.
+
+| Artifact | Default storage | Naming rule |
+|---|---|---|
+| Raw source payloads | MinIO bucket `bronze` | `source=<source>/venue=<venue>/date=<yyyy-mm-dd>/<payload_hash>.json` |
+| Normalized market data | PostgreSQL/TimescaleDB + Parquet snapshots | Partition by `venue_id`, `instrument_id`, `timeframe`, event date. |
+| Feature snapshots | MinIO bucket `gold` / Parquet | Include `feature_version`, `snapshot_id`, and source data version. |
+| Dataset snapshots | MinIO bucket `datasets` | Include dataset hash, split rules, label rules, feature version. |
+| Experiment artifacts | MLflow/MinIO | Include run ID, code commit, config hash, container tag/digest. |
+| Validation reports | MinIO bucket `reports` or committed small markdown summaries | Include gate name, run ID, thresholds, pass/fail, owner. |
+| Decision traces | PostgreSQL + optional trace artifacts in MinIO | Use `trace_id` spanning data → feature → model → strategy → risk → order/fill. |
+
+---
+
+## 6. Early implementation implications
+
+Sprint 0 must create or approve:
+
+1. `pyproject.toml` and dependency strategy.
+2. Docker base image strategy and Compose profile names.
+3. PostgreSQL/TimescaleDB schema migration tool choice.
+4. MinIO bucket layout and local credentials policy.
+5. MLflow backend/artifact configuration.
+6. Redpanda topic naming convention for market, decision, risk, order, fill, TCA, and audit events.
+7. CI gates for Docker build, unit/schema tests, leakage tests, secret scan, and minimal integration smoke.
+
+---
+
+## 7. ADR triggers
+
+Create an ADR before any of these changes:
+
+- Replacing Python as the primary implementation language.
+- Replacing PostgreSQL/TimescaleDB, MinIO, MLflow, Prefect, or Redpanda.
+- Adding a new persistent datastore, event broker, cloud-managed dependency, or workflow platform.
+- Introducing Kubernetes, live trading credentials, derivatives-specific runtime, or online model update tooling.
+- Removing Docker from local/CI integration expectations.
