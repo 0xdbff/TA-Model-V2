@@ -1,6 +1,6 @@
 # Automated Asset-Agnostic Trading Intelligence System — Specification Bundle
 
-This ZIP contains a complete project model for a validation-first, asset-agnostic trading intelligence system.
+This repository contains a complete project model for a validation-first, asset-agnostic trading intelligence system.
 
 ## Files
 
@@ -15,6 +15,15 @@ This ZIP contains a complete project model for a validation-first, asset-agnosti
 | `07_data_contracts.md` | Data schemas, quality gates, lineage, and retention plan. |
 | `08_mvp_backlog.md` | MVP scope, delivery phases, and P0 backlog. |
 | `09_references.md` | Regulatory and risk-management references used for control design. |
+| `10_implementation_roadmap.md` | Staged implementation roadmap, sprint sequence, validation strategy, QA strategy, and integration strategy. |
+| `11_tech_stack_and_docker.md` | Early technical stack choice and Docker/Compose runtime plan. |
+| `12_sprint_execution_playbook.md` | Sprint operating mechanics, evidence packets, QA approach, and integration playbook. |
+| `13_github_issue_backlog.md` | GitHub milestone, label, issue, and requirement-coverage pack. |
+| `rules/00_delivery_anti_drift_rules.md` | Binding anti-drift rules for scope, stack, validation, QA, integration, and model/data drift. |
+
+## GitHub workflow aids
+
+Issue templates live in `.github/ISSUE_TEMPLATE/` and require requirement traceability, Docker/runtime impact, validation evidence, integration path, and anti-drift checks.
 
 ## Operating principle
 
