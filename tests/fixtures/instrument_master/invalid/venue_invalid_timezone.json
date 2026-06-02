@@ -1,0 +1,32 @@
+{
+  "target_schema": "Venue",
+  "expected_error_substrings": ["timezone"],
+  "payload": {
+    "schema_version": "venue.v1",
+    "venue_id": "COINBASE_SPOT",
+    "name": "Coinbase Spot Fixture Venue",
+    "venue_type": "exchange",
+    "timezone": "Moon/Base",
+    "api_endpoint_group": {
+      "group_id": "COINBASE_SPOT_PUBLIC",
+      "rest_base_url": "https://api.exchange.coinbase.com",
+      "websocket_url": "wss://ws-feed.exchange.coinbase.com",
+      "status_url": "https://status.coinbase.com",
+      "documentation_url": "https://docs.cdp.coinbase.com/exchange/"
+    },
+    "status": "active",
+    "rate_limits": [
+      {
+        "rate_limit_id": "COINBASE_SPOT_REST_METADATA",
+        "scope": "metadata",
+        "limit": 10,
+        "interval_seconds": 1,
+        "burst_limit": 15
+      }
+    ],
+    "supported_order_types": ["market", "limit"],
+    "source_id": "FIXTURE_S1_001",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}

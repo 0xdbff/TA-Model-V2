@@ -1,0 +1,17 @@
+{
+  "target_schema": "Asset",
+  "expected_error_substrings": ["classifications"],
+  "payload": {
+    "schema_version": "asset.v1",
+    "asset_id": "BTC",
+    "symbol": "BTC",
+    "name": "Bitcoin",
+    "asset_type": "crypto",
+    "issuer": null,
+    "category": "digital_asset",
+    "status": "active",
+    "source_id": "FIXTURE_S1_001",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}
