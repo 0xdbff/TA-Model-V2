@@ -15,6 +15,7 @@ Use a **Python-first, Dockerized, event-time, validation-first stack**.
 | Primary language | Python 3.12 | Strong data/ML ecosystem; fastest path to ingestion, features, modeling, simulation, and paper trading. |
 | Dependency/build | `uv`, `pyproject.toml`, locked dependencies | Fast reproducible Python environments; works well in Docker and CI. |
 | APIs/CLIs | FastAPI, Pydantic v2, Typer | Typed contracts for services and CLI workflows; clean validation for event schemas. |
+| Exchange connector SDK | `ccxt` | Pinned Python dependency for future REST-based spot exchange adapters and metadata discovery. It must remain behind project connector/gateway contracts and does not approve any venue source, live credentials, paper routing, or risk bypass by itself. |
 | Dataframes/query | Polars, PyArrow, DuckDB | Efficient local/batch analytics, Parquet snapshots, leakage-safe dataset generation. |
 | Relational/time-series store | PostgreSQL 16 with TimescaleDB extension | Durable metadata, orders, risk state, audit records, and time-series querying in one Dockerized service. |
 | Object/artifact store | S3-compatible storage via MinIO locally | Immutable bronze payloads, dataset snapshots, model artifacts, reports, and replay evidence. |
@@ -81,6 +82,34 @@ Architecture guardrails:
 7. Do not commit Hugging Face tokens, private model credentials, downloaded
    weights, or unapproved pretrained checkpoints. Pin checkpoint revision hashes
    where practical and record model-card/license evidence.
+
+### 2.2 CCXT exchange connector guidance
+
+`ccxt` is an approved project dependency for reducing exchange-specific REST API
+plumbing in future connector work. It is a library dependency, not a new runtime
+service, datastore, broker, registry, gateway, source approval, or execution
+permission.
+
+Guardrails:
+
+1. Use `ccxt` only behind project-owned connector and execution-gateway
+   interfaces so downstream ingestion, simulator, risk, paper, and future live
+   paths do not depend directly on third-party exchange objects.
+2. Treat every exchange exposed by `ccxt` as blocked until its row in
+   `docs/source_license_register.csv` is reviewed and approved for the intended
+   use. Binance spot is important for future support, but its source row starts
+   `blocked_pending_review`.
+3. Standard `ccxt` covers REST exchange integration. WebSocket streaming, if
+   needed for S3/S10 paper paths, must be implemented through an approved native
+   connector or separately approved dependency and source review.
+4. Do not commit exchange API keys, secrets, account IDs, private payloads, paid
+   data, or confidential terms. Any future credential use must be least-privilege,
+   withdrawal-disabled, and isolated by Docker profile/environment.
+5. `ccxt` cannot bypass instrument-master constraints, event-time data rules,
+   source/license gates, independent pre-trade risk, kill switches, idempotency,
+   audit traces, or paper/live promotion gates.
+6. Derivatives, margin, leverage, shorting, futures, perpetuals, and funding
+   endpoints remain out of MVP scope even if an exchange SDK exposes them.
 
 ---
 
