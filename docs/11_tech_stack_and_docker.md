@@ -21,7 +21,7 @@ Use a **Python-first, Dockerized, event-time, validation-first stack**.
 | Experiment/model registry | MLflow with PostgreSQL backend and object-store artifacts | Reproducible experiments, model registry states, metrics, artifacts, and rollback pointers. |
 | Workflow orchestration | Prefect | Python-native scheduled/backfill/training/paper workflows without adopting heavyweight infra early. |
 | Event bus | Redpanda/Kafka-compatible event stream | Local Docker-compatible stream for market events, paper trading, and integration tests. |
-| ML/modeling | scikit-learn + LightGBM for baselines; PyTorch for sequence/transformer candidates | Baselines first; deep model only after baseline/evaluation harness exists. |
+| ML/modeling | scikit-learn + LightGBM for baselines; PyTorch for sequence/transformer candidates; optional Hugging Face `transformers` for gated research candidates | Baselines first; deep model only after baseline/evaluation harness exists. Hugging Face usage must stay within existing Python/PyTorch + MLflow workflows and must not introduce a new runtime service, datastore, registry, or deployment path. |
 | Validation/testing | pytest, Hypothesis, Pandera, Pydantic schema tests | Unit, property, dataframe, event-contract, and leakage checks. |
 | Observability | OpenTelemetry, Prometheus, Grafana, structured JSON logs | Metrics, traces, latency, dashboards, and alert-ready telemetry. |
 | Security checks | detect-secrets, Trivy, dependency audit in CI | Secret and supply-chain checks before runtime expansion. |
@@ -41,6 +41,46 @@ These are blocked unless an issue/ADR proves they are needed:
 | Full web UI | Defer. Use reports, dashboards, and APIs first; add UI only when operator workflow demands it. |
 | Online learning framework | Prohibited for live impact in MVP. Shadow candidates only. |
 | Derivatives/margin-specific systems | Defer to P2 and only after derivative-specific controls exist. |
+
+### 2.1 Hugging Face and 1B-class model guidance
+
+Hugging Face `transformers` is an **optional research/modeling library**, not a
+runtime dependency or promotion shortcut. It may be used for sequence and
+time-series transformer candidates only when package versions, model checkpoint
+revisions, model licenses, artifact hashes, and offline/reproducible download
+paths are controlled through the existing dependency lock, source/license review,
+and MLflow artifact/registry workflow. Any dependency or checkpoint introduction
+must be handled by a traceable issue/PR with requirement IDs, Docker/profile
+impact, validation evidence, and anti-drift checks.
+
+For a future 1B-class candidate, using the 2026 option set as the planning
+baseline, the preferred architecture is a **patched decoder-only time-series
+Transformer** inspired by time-series transformer and foundation-model families
+such as PatchTST, TimesFM, and Chronos, with market-specific numeric patch
+embeddings and probabilistic forecast heads. This is preferred over a general
+text LLM because it aligns with event-time causal forecasting, supports long
+market contexts more efficiently than per-timestep attention, avoids fragile
+text-token numeric modeling, and can emit calibrated return/volatility/quantile
+distributions needed by the strategy layer.
+
+Architecture guardrails:
+
+1. Treat 1B-class models as S7+ research candidates only; they must not block
+   baseline, simulator, risk, audit, or paper-readiness work.
+2. Start with smaller PatchTST/Chronos/TimesFM-style pilots before scaling; scale
+   toward ~0.7B–1B parameters only after smaller candidates show reproducible,
+   net-of-cost, benchmark-relative, calibrated improvement.
+3. Use causal/event-time inputs only. No feature, target, patch, benchmark, or
+   normalization statistic may use future data.
+4. Produce probabilistic outputs: return distribution, quantiles, uncertainty,
+   and calibration metadata. Point forecasts alone are insufficient.
+5. Compare against cash/no-trade, buy-and-hold, basket benchmarks, LightGBM,
+   simple PyTorch sequence baselines, and S5 baseline reports before promotion.
+6. Keep model promotion gated through MLflow states and owner review; no online
+   self-update, auto-promotion, or direct paper/live routing is allowed.
+7. Do not commit Hugging Face tokens, private model credentials, downloaded
+   weights, or unapproved pretrained checkpoints. Pin checkpoint revision hashes
+   where practical and record model-card/license evidence.
 
 ---
 
@@ -112,8 +152,11 @@ Sprint 0 must create or approve:
 3. PostgreSQL/TimescaleDB schema migration tool choice.
 4. MinIO bucket layout and local credentials policy.
 5. MLflow backend/artifact configuration.
-6. Redpanda topic naming convention for market, decision, risk, order, fill, TCA, and audit events.
-7. CI gates for Docker build, unit/schema tests, leakage tests, secret scan, and minimal integration smoke.
+6. Hugging Face `transformers` dependency policy for optional research use,
+   including model revision pinning, license review, and offline artifact
+   capture when transformer candidates are introduced.
+7. Redpanda topic naming convention for market, decision, risk, order, fill, TCA, and audit events.
+8. CI gates for Docker build, unit/schema tests, leakage tests, secret scan, and minimal integration smoke.
 
 ---
 
