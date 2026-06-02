@@ -1,0 +1,31 @@
+id,priority,area,requirement,acceptance_criteria
+FR-001,P0,Data ingestion,Ingest historical OHLCTV bars for configured instruments/timeframes,Backfill completes; schema validates; missing intervals flagged; lineage stored
+FR-002,P0,Data ingestion,"Ingest real-time trades, quotes, and order-book data where available","Stream freshness, sequence gaps, duplicates, and reconnects measured and alerted"
+FR-003,P0,Instrument master,"Normalize symbols, assets, venues, tick size, lot size, min notional, fees",Canonical instrument maps to venue-specific identifiers and constraints
+FR-004,P0,Feature engineering,Compute TA features with point-in-time correctness,Leakage tests pass; higher timeframe features lagged until close
+FR-005,P0,Feature engineering,Compute basic liquidity/cost features,"Spread, volume, volatility, and fee features available at decision time"
+FR-006,P0,Dataset,Build chronological train/validation/test snapshots,"Snapshot hash, split rules, labels, and feature versions stored"
+FR-007,P0,Modeling,Train baselines before transformer candidates,"Baseline report includes cash, buy-and-hold, TA heuristic, simple ML"
+FR-008,P0,Modeling,Produce probabilistic outputs and uncertainty,"Forecast object includes probabilities/quantiles, calibration status, and uncertainty"
+FR-009,P0,Strategy,Support trade/no-trade decisions,"Decision object includes expected return, expected cost, net edge, uncertainty, and reason code"
+FR-010,P0,Risk,Enforce independent pre-trade controls,Forced-breach tests block unsafe orders 100% of the time
+FR-011,P0,Risk,Provide manual and automated kill switches,Kill state persists across restart and blocks new orders
+FR-012,P0,Simulation,Run historical replay with costs and slippage,"Backtest includes fees, spread, slippage, latency, partial/failed fills"
+FR-013,P0,Paper trading,Run paper strategy on live data,"Paper account logs signals, orders, fills, portfolio, TCA, and rejections"
+FR-014,P0,Evaluation,"Evaluate model, strategy, portfolio, and engine separately","Reports include model calibration, net strategy metrics, portfolio risk, TCA"
+FR-015,P0,Audit,Reconstruct decisions from trace ID,"Sampled decisions replay data, features, model output, checks, and order intent"
+FR-016,P1,Multi-venue,Support multiple exchange/broker adapters,Two adapters pass shared capability and order lifecycle tests
+FR-017,P1,Portfolio,Allocate capital across assets/strategies under constraints,"Allocator respects exposure, volatility, correlation, venue, and cash constraints"
+FR-018,P1,RL,Use offline RL/bandits for sizing or strategy selection,Policy beats deterministic heuristic in validation without worse drawdown/CVaR
+FR-019,P1,Model lifecycle,Support champion/challenger and shadow mode,Candidate scores live data without influencing orders until approved
+FR-020,P1,TCA,Calibrate slippage/fill models from paper/live fills,"TCA compares arrival mid, realized fill, predicted slippage, and benchmark prices"
+FR-021,P2,Alternative data,Add exogenous feature families,"New source passes license, leakage, quality, and incremental-value gates"
+FR-022,P2,Derivatives,"Support funding, borrow, margin, expiry, liquidation",Derivative strategies blocked until all derivative-specific fields and risk controls exist
+NFR-001,P0,Correctness,Prevent lookahead leakage,Automated leakage tests fail build on future-derived features or labels
+NFR-002,P0,Security,Protect API keys and secrets,Secrets manager; no secret in logs/code; least-privilege and withdrawal-disabled keys where possible
+NFR-003,P0,Reliability,Recover ingestion from disconnects,Reconnect and gap-fill test passes without duplicate data
+NFR-004,P0,Auditability,Log all live decisions and overrides,Orders cannot be submitted without traceable decision and risk approval
+NFR-005,P0,Reproducibility,Re-run experiments from run ID,Metrics reproduce within tolerance from stored data/config/code/model
+NFR-006,P0,Safety,Fail closed on stale critical feeds,Risk engine blocks affected strategy/instrument if required feed stale
+NFR-007,P1,Scalability,Onboard new venues without core changes,Adapter contract tests pass; core strategy/model code unchanged
+NFR-008,P1,Cost,Track infrastructure and data costs,Cost report available per experiment and production day

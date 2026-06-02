@@ -1,0 +1,16 @@
+id,risk,priority,likelihood,impact,trigger,controls,owner
+RISK-001,Market drawdown,P0,High,High,Portfolio loss exceeds tolerance in crash regime,"Max drawdown limits, volatility targeting, de-risking overlay, stress tests",Risk owner
+RISK-002,Liquidity collapse,P0,Medium,High,"Spread widens, depth disappears, fills fail","Spread/depth gates, participation caps, no-trade rules, TCA",Execution/risk
+RISK-003,Model overfit,P0,High,High,Backtest works but paper/live fails,"Walk-forward validation, baselines, ablation, paper gate, drift monitoring",ML lead
+RISK-004,Lookahead leakage,P0,Medium,High,Features or labels use future information,"Automated leakage tests, event-time joins, feature audits",Data/ML
+RISK-005,Fee/slippage underestimation,P0,High,High,Gross edge vanishes after execution,"Conservative cost model, slippage stress, TCA calibration",Quant/execution
+RISK-006,API/venue outage,P0,Medium,High,Orders cannot be placed/cancelled or balances stale,"Venue status monitor, halt affected venue, reconciliation, runbook",Ops
+RISK-007,Order duplication,P0,Low,High,Retries create duplicate exposure,"Idempotency keys, order state machine, reconciliation",Execution
+RISK-008,Secrets compromise,P0,Low,High,API keys leaked or abused,"Secrets manager, IP allowlist, least privilege, withdrawal disabled, audit",Security
+RISK-009,Compliance breach,P0,Medium,High,Strategy violates venue rules or market abuse restrictions,"Legal review, market abuse controls, order throttles, recordkeeping",Legal/compliance
+RISK-010,Custody/exchange failure,P0 crypto,Medium,High,Capital inaccessible or lost on venue,"Venue caps, withdrawal policy, balance reconciliation, counterparty review",Risk/ops
+RISK-011,Correlation spike,P1,High,Medium,Diversification fails in crisis,"Correlation regime monitor, cluster exposure caps, stress tests",Risk
+RISK-012,RL reward hacking,P1,Medium,High,Policy exploits simulator artifact,"Conservative validation, impossible-fill checks, stress tests, deterministic fallback",ML/risk
+RISK-013,Data license violation,P0,Low,High,Unauthorized storage/production use,"Source license register, retention rules, legal gate",Legal/data
+RISK-014,Operational blind spot,P0,Medium,High,Incident not detected quickly,"Dashboards, alerts, on-call runbooks, incident reviews",Ops
+RISK-015,Benchmark misselection,P0,Medium,Medium,Strategy appears good against weak baseline,"Benchmark policy, multiple baselines, opportunity-cost reporting",Product/quant

@@ -1,0 +1,13 @@
+id,priority,role,want,so_that,acceptance_criteria
+US-001,P0,Quant researcher,Run walk-forward backtests,Estimate out-of-sample strategy performance,"Report includes net return, Sharpe, Sortino, Calmar, max drawdown, turnover, exposure, costs, and benchmark-relative metrics"
+US-002,P0,ML lead,Compare transformer to baselines,Justify model complexity,Candidate cannot be promoted without baseline comparison and risk-adjusted improvement or documented risk-control value
+US-003,P0,Risk owner,Block unsafe orders before venue submission,Prevent uncontrolled losses and disorderly behavior,"Orders breaching notional, position, spread, liquidity, volatility, stale-data, or loss limits are rejected with reason code"
+US-004,P0,Operator,Activate a kill switch,Stop trading immediately,"Kill switch blocks new orders, optionally cancels opens, persists state, and logs actor/time/reason"
+US-005,P0,Data engineer,See dataset quality metrics,Avoid corrupted training/evaluation,"Dataset build fails if missing, duplicate, timestamp, or schema thresholds are breached"
+US-006,P0,Portfolio owner,Evaluate no-trade decisions,Measure opportunity cost and abstention quality,"No-trade logs include edge, cost threshold, uncertainty, and benchmark/cash alternative"
+US-007,P0,Auditor,Replay any decision,Prove auditability,"Trace ID reconstructs data snapshot, feature vector, model output, risk checks, order intent, and fill events"
+US-008,P1,PM,Use staged rollout,Scale capital only after evidence,"Capital cap increases only after paper/live gates pass configured duration, trade count, and drawdown criteria"
+US-009,P1,ML engineer,Monitor drift,Detect degradation early,"Feature, prediction, calibration, residual, and portfolio drift alerts trigger review or de-risking"
+US-010,P1,Strategy owner,Test RL sizing offline,Improve allocation without live exploration,RL policy beats fixed and vol-target sizing without higher drawdown or CVaR
+US-011,P1,Execution engineer,Run transaction cost analysis,Align simulation with live execution,"Report compares fill price to arrival mid, quote, VWAP/TWAP, predicted and realized slippage, and fill probability"
+US-012,P2,Researcher,Add alternative data,Test exogenous signals,"New source passes license, schema, latency, quality, leakage, and incremental-value tests"

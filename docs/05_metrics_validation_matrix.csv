@@ -1,0 +1,21 @@
+metric,layer,priority,definition,pass_criteria,gate
+Data completeness,Data,P0,Missing bars/gaps by instrument/timeframe,Below configured threshold per dataset/window,Data gate
+Data freshness,Data,P0,Seconds since latest event,Below strategy-specific stale threshold,Live/paper
+Leakage tests,Feature,P0,Future-shift/leakage audit,Zero known leakage,Data/model gate
+Calibration error,Model,P0,Reliability/calibration deviation,Within configured tolerance and better than baseline,Model gate
+NLL/Brier,Model,P0,Probabilistic forecast quality,Better than baseline in walk-forward windows,Model gate
+Quantile coverage,Model,P0,Realized returns within predicted intervals,Within tolerance of nominal coverage,Model gate
+Sharpe,Portfolio,P0,Net excess return / volatility,Beat benchmark after costs in validation/paper,Simulation/paper gate
+Sortino,Portfolio,P0,Net return / downside deviation,Beat benchmark after costs,Simulation/paper gate
+Calmar,Portfolio,P0,Net return / max drawdown,Above configured minimum,Simulation/paper gate
+Max drawdown,Portfolio,P0,Peak-to-trough net equity loss,Below hard threshold,Risk/live gate
+CVaR,Portfolio,P0,Expected tail loss,Below risk budget,Risk/live gate
+Cost drag,Strategy,P0,Fees+spread+slippage / gross edge,Below configured maximum; stressed-cost test still viable,Simulation gate
+Turnover,Strategy,P0,Traded notional / equity,Below churn threshold unless justified by net edge,Strategy gate
+No-trade quality,Strategy,P0,Skipped vs taken trade utility,Skipped trades do not show materially better realized net utility than taken trades,Strategy gate
+Slippage prediction error,Execution,P0,Predicted vs realized fill cost,Within tolerance before live scaling,Paper/live gate
+Order reject rate,Execution,P0,Rejected orders / submitted orders,Below threshold; bursts alert/halt,Paper/live gate
+Decision latency,Engine,P0,p50/p95/p99 decision and order latency,Below horizon-specific threshold,Live gate
+Reproducibility pass rate,Audit,P0,Replay success for sampled decisions,100% for required sample before promotion,Audit gate
+Drift score,Model/feature,P1,PSI/KS/residual/calibration drift,No sustained severe breach; or de-risking active,Monitoring
+Benchmark-relative preservation,Portfolio,P0,Down-market loss avoided vs benchmark,Positive contribution allowed only net of hidden risk and costs,Portfolio gate

@@ -1,0 +1,54 @@
+flowchart LR
+  subgraph Sources
+    MD[Exchange/Broker/Vendor Market Data]
+    META[Instrument Metadata + Fees]
+    ACCT[Balances/Positions]
+  end
+  subgraph Data_Platform
+    CONN[Connectors: backfill + stream]
+    RAW[Bronze Raw Event Store]
+    NORM[Normalizer + QA]
+    CLEAN[Silver Market Store]
+    FEAT[Feature Engine]
+    FS[Gold Feature Store]
+    SNAP[Dataset Snapshots]
+  end
+  subgraph Intelligence
+    TRAIN[Offline Training]
+    BASE[Baselines]
+    REG[Model Registry]
+    INF[Inference Service]
+    STRAT[Strategy / Agent Layer]
+    RISK[Independent Risk Engine]
+  end
+  subgraph Execution_Modes
+    SIM[Historical + Synthetic Simulator]
+    PAPER[Paper Gateway]
+    LIVE[Live Execution Gateway]
+    VENUE[Venue Adapters]
+  end
+  subgraph Control
+    EVAL[Evaluation + Promotion Gates]
+    OBS[Observability + Drift]
+    AUDIT[Audit + Replay]
+    KILL[Kill Switch]
+  end
+  MD --> CONN
+  META --> NORM
+  ACCT --> RISK
+  CONN --> RAW --> NORM --> CLEAN --> FEAT --> FS --> SNAP
+  SNAP --> TRAIN
+  BASE --> TRAIN
+  TRAIN --> REG --> INF
+  FS --> INF --> STRAT --> RISK
+  KILL --> RISK
+  RISK --> SIM
+  RISK --> PAPER
+  RISK --> LIVE --> VENUE
+  SIM --> EVAL
+  PAPER --> EVAL
+  LIVE --> EVAL
+  EVAL --> OBS
+  OBS --> REG
+  EVAL --> AUDIT
+  RISK --> AUDIT
