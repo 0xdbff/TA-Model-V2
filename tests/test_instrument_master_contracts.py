@@ -25,6 +25,8 @@ from ta_model.contracts.instrument_master import (
 type FixtureModel = type[BaseModel]
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "instrument_master"
+PROJECT_ROOT = Path(__file__).parents[1]
+MVP_SPOT_SEED = PROJECT_ROOT / "configs" / "instrument_master" / "mvp_spot_seed.json"
 MODEL_BY_NAME: dict[str, FixtureModel] = {
     "Account": Account,
     "Asset": Asset,
@@ -66,6 +68,87 @@ def test_valid_mvp_spot_snapshot_fixture_validates_and_round_trips() -> None:
 
     round_tripped = InstrumentMasterSnapshot.model_validate(snapshot.model_dump(mode="json"))
     assert round_tripped == snapshot
+
+
+@pytest.mark.contract
+@pytest.mark.schema
+def test_s1_003_mvp_seed_maps_canonical_instruments_to_venue_symbols() -> None:
+    payload = _load_json(MVP_SPOT_SEED)
+
+    snapshot = InstrumentMasterSnapshot.model_validate(payload)
+
+    assert snapshot.snapshot_id == "S1_003_MVP_SPOT_MAPPING_SEED"
+    expected_mapping = {
+        "COINBASE_SPOT:BTC-USD": (
+            "BTC-USD",
+            "COINBASE_SPOT",
+            "BTC-USD",
+            "BTC",
+            "USD",
+            Decimal("0.01"),
+            Decimal("0.00000001"),
+            Decimal("1.00"),
+        ),
+        "COINBASE_SPOT:ETH-USD": (
+            "ETH-USD",
+            "COINBASE_SPOT",
+            "ETH-USD",
+            "ETH",
+            "USD",
+            Decimal("0.01"),
+            Decimal("0.00000001"),
+            Decimal("1.00"),
+        ),
+        "COINBASE_SPOT:SOL-USD": (
+            "SOL-USD",
+            "COINBASE_SPOT",
+            "SOL-USD",
+            "SOL",
+            "USD",
+            Decimal("0.01"),
+            Decimal("0.000001"),
+            Decimal("1.00"),
+        ),
+    }
+    actual_mapping = {
+        instrument.instrument_id: (
+            instrument.canonical_symbol,
+            instrument.venue_id,
+            instrument.venue_symbol,
+            instrument.base_asset_id,
+            instrument.quote_asset_id,
+            instrument.tick_size,
+            instrument.lot_size,
+            instrument.min_notional,
+        )
+        for instrument in snapshot.instruments
+    }
+
+    assert actual_mapping == expected_mapping
+    assert len(snapshot.instruments) == 3
+    assert {instrument.fee_schedule_id for instrument in snapshot.instruments} == {
+        "COINBASE_SPOT_STANDARD_FEES_2026Q2"
+    }
+    assert {session.session_id for session in snapshot.trading_sessions} == {
+        "COINBASE_SPOT_24X7_2026Q2"
+    }
+    assert {instrument.instrument_type.value for instrument in snapshot.instruments} == {"spot"}
+    assert {instrument.status.value for instrument in snapshot.instruments} == {"trading"}
+    assert not any(instrument.is_derivative for instrument in snapshot.instruments)
+    assert not any(instrument.margin_allowed for instrument in snapshot.instruments)
+    assert not any(instrument.short_selling_allowed for instrument in snapshot.instruments)
+    assert not any(instrument.leverage_allowed for instrument in snapshot.instruments)
+    assert {asset.source_id for asset in snapshot.assets} == {"S1_003_MAPPING_SEED"}
+    assert {venue.source_id for venue in snapshot.venues} == {"S1_003_MAPPING_SEED"}
+    assert {instrument.source_id for instrument in snapshot.instruments} == {
+        "S1_003_MAPPING_SEED"
+    }
+    seed_account = snapshot.accounts[0]
+    assert seed_account.live_capital_enabled is False
+    assert seed_account.withdrawals_enabled is False
+    assert seed_account.margin_enabled is False
+    assert seed_account.derivatives_enabled is False
+    assert seed_account.shorting_enabled is False
 
 
 @pytest.mark.contract
