@@ -1,0 +1,21 @@
+{
+  "target_schema": "TradingSession",
+  "expected_error_substrings": ["24x7 trading sessions"],
+  "payload": {
+    "schema_version": "trading-session.v1",
+    "session_id": "COINBASE_SPOT_24X7_2026Q1",
+    "venue_id": "COINBASE_SPOT",
+    "name": "Coinbase Spot 24x7 Fixture Session",
+    "timezone": "UTC",
+    "days_of_week": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    "is_24x7": true,
+    "open_time": null,
+    "close_time": null,
+    "status": "active",
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "source_id": "FIXTURE_S1_002",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}

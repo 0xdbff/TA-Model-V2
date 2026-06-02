@@ -54,6 +54,68 @@
         "metadata_ts": "2026-01-01T00:00:00Z"
       }
     ],
+    "fee_schedules": [
+      {
+        "schema_version": "fee-schedule.v1",
+        "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES_2026Q1",
+        "venue_id": "COINBASE_SPOT",
+        "fee_tier_id": "COINBASE_SPOT_STANDARD_FEES",
+        "maker_fee_rate": "0.0060",
+        "taker_fee_rate": "0.0060",
+        "fee_asset_id": "USD",
+        "min_fee": "0",
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "source_id": "FIXTURE_S1_002",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "trading_sessions": [
+      {
+        "schema_version": "trading-session.v1",
+        "session_id": "COINBASE_SPOT_24X7_2026Q1",
+        "venue_id": "COINBASE_SPOT",
+        "name": "Coinbase Spot 24x7 Fixture Session",
+        "timezone": "UTC",
+        "days_of_week": [
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday"
+        ],
+        "is_24x7": true,
+        "open_time": null,
+        "close_time": null,
+        "status": "active",
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "source_id": "FIXTURE_S1_002",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "instrument_constraints": [
+      {
+        "schema_version": "instrument-constraint.v1",
+        "constraint_id": "COINBASE_SPOT:BTC-USD:CONSTRAINTS:2026Q1",
+        "instrument_id": "COINBASE_SPOT:BTC-USD",
+        "tick_size": "0.01",
+        "lot_size": "0.00000001",
+        "min_notional": "1.00",
+        "min_order_quantity": "0.00000001",
+        "max_order_quantity": null,
+        "max_order_notional": null,
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "source_id": "FIXTURE_S1_002",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
     "instruments": [
       {
         "schema_version": "instrument.v1",
@@ -68,7 +130,7 @@
         "tick_size": "0.01",
         "lot_size": "0.00000001",
         "min_notional": "1.00",
-        "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES",
+        "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES_2026Q1",
         "supported_order_types": ["market", "limit"],
         "effective_from": "2026-01-01T00:00:00Z",
         "effective_to": null,
