@@ -38,7 +38,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 
 | Issue | Sprint | Status at loop start | Evidence / notes |
 |---|---|---:|---|
-| #23 | S5-001 | Open | Needs cash/no-trade, buy-and-hold, equal-weight or volatility-target baseline report across configured windows. |
+| #23 | S5-001 | PR #85 merged to loop | Cash/no-trade, buy-and-hold, and equal-weight basket baselines added with split-local turnover reset semantics, deterministic lineage, proxy-cost assumptions, and concrete per-window report evidence. |
 | #24 | S5-002 | Open | Needs simple TA heuristic and simple ML baseline comparator metrics with no leakage. |
 | #25 | S5-003 | Open | Needs scorecard with net return, Sharpe, Sortino, Calmar, drawdown, CVaR, turnover, exposure, costs, benchmark-relative metrics. |
 | #26 | S5-004 | Open | Needs baseline gate decision aggregating #23-#25 evidence with pass/fail/blockers. |
@@ -60,7 +60,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 
 | Issue | Sprint | Branch | Worktree | Agent | PR | Status |
 |---|---|---|---|---|---|---|
-| #23 | S5-001 | `agent/23-S5-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-23-S5-001-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending assignment. |
+| #23 | S5-001 | `agent/23-S5-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-23-S5-001-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#85](https://github.com/0xdbff/TA-Model-V2/pull/85) merged | Completed after QA-requested split/window reset, chronological fail-closed validation, and concrete report-table evidence fixes. |
 | #24 | S5-002 | `agent/24-S5-002` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-24-S5-002-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending assignment. |
 | #25 | S5-003 | `agent/25-S5-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-25-S5-003-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on baseline output schema. |
 | #26 | S5-004 | `agent/26-S5-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-26-S5-004-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on #23-#25 evidence. |
@@ -89,6 +89,11 @@ Additional focused checks expected:
 
 ## QA findings and integration risks
 
+- #23 initial review found blocking split/window semantics: buy-and-hold and equal-weight
+  position state carried across train/validation/test windows, understating entry
+  turnover/cost. Fixed before merge by resetting state per `(split, instrument)`,
+  adding chronological fail-closed validation, regression tests, and a concrete
+  per-window report table.
 - Baselines must consume S4 dataset/feature contracts where feasible; fixture/local
   deterministic data is acceptable only at appropriate test/report boundaries.
 - S5 cost modeling is pre-S6; conservative/proxy costs must be documented and not
@@ -104,7 +109,11 @@ Additional focused checks expected:
 ## Integrated validation log
 
 - Loop worktree created from `origin/dev` at `b89ff36`.
-- Initial planning/exploration completed; no production code merged yet.
+- Initial planning/exploration completed before sub-agent assignments.
+- #23 PR #85 pre-merge validation in sub-agent worktree: `uv run ruff check .`
+  passed; `uv run mypy src tests` passed; `uv run pytest` passed with 137 tests.
+- Loop validation after #23 merge: `uv run ruff check .` passed; `uv run mypy src tests`
+  passed; `uv run pytest` passed with 137 tests.
 
 ## Human-sync decisions
 
@@ -112,8 +121,6 @@ None yet.
 
 ## Remaining blockers
 
-- Sub-agent worktrees and branches still need to be created from the latest loop
-  branch.
-- Sub-agent implementation PRs #23-#26 are not opened or reviewed yet.
+- Sub-agent work for #24-#26 is not merged yet.
 - Final integration PR is not ready until all S5 evidence is implemented,
   reviewed, merged to the loop branch, and validated as an integrated whole.
