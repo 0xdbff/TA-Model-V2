@@ -6,7 +6,7 @@
 **Base:** latest `origin/dev` at `b89ff36`  
 **Final PR base:** `dev`  
 **Final PR source:** `agent/loop-061403c1-9c8c-4b31-8bfe-314df3e170af`  
-**Final PR:** Not opened yet.
+**Final PR:** [#89](https://github.com/0xdbff/TA-Model-V2/pull/89)
 
 ## Scope and sprint objective
 
@@ -152,4 +152,4 @@ None yet.
 ## Remaining blockers
 
 - No S5 sub-agent blockers remain.
-- Final integration PR is ready to open from `agent/loop-061403c1-9c8c-4b31-8bfe-314df3e170af` into `dev`.
+- Final integration PR [#89](https://github.com/0xdbff/TA-Model-V2/pull/89) is open from `agent/loop-061403c1-9c8c-4b31-8bfe-314df3e170af` into `dev`; final merge remains human/project-policy controlled.
