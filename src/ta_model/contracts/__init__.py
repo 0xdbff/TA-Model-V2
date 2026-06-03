@@ -47,6 +47,17 @@ from ta_model.contracts.market_data import (
     TradeRecord,
     TradeSide,
 )
+from ta_model.contracts.stream_health import (
+    StreamHealthCheck,
+    StreamHealthEvaluator,
+    StreamHealthIssue,
+    StreamHealthMetric,
+    StreamHealthMetricName,
+    StreamHealthPolicy,
+    StreamHealthRecord,
+    StreamHealthScope,
+    StreamHealthStatus,
+)
 from ta_model.contracts.streaming import (
     BookLevel,
     ConnectorStatus,
@@ -132,4 +143,13 @@ __all__ = [
     "StreamingConnector",
     "StreamingSourceApproval",
     "TradeEvent",
+    "StreamHealthCheck",
+    "StreamHealthEvaluator",
+    "StreamHealthIssue",
+    "StreamHealthMetric",
+    "StreamHealthMetricName",
+    "StreamHealthPolicy",
+    "StreamHealthRecord",
+    "StreamHealthScope",
+    "StreamHealthStatus",
 ]
