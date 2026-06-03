@@ -15,7 +15,9 @@ Requirements: FR-006, NFR-005; preserves FR-004, FR-005, NFR-001
 
 - Deterministic dataset hash and row IDs are contract-tested.
 - Feature versions, source feature snapshot IDs, and split row counts are stored and validated.
-- Missing labels, duplicate/non-monotonic feature times, duplicate/non-monotonic label event times, overlapping or misordered split windows, and label-as-feature leakage fail closed.
+- Missing labels, duplicate/non-monotonic feature times, duplicate/non-monotonic label event times, overlapping or misordered split windows, features outside split windows, and label-as-feature leakage fail closed.
+- Mixed-case label rule names are normalized for label-as-feature leakage checks.
+- Snapshot contract validation rejects rows whose stored split contradicts the stored split windows, even when row IDs/hashes/counts are otherwise internally consistent.
 - Future label mutation changes only rows whose configured horizon uses that observation.
 - Future feature mutation does not alter earlier rows.
 
@@ -25,7 +27,7 @@ Executed locally in this PR branch:
 
 1. `uv run ruff check .` — passed (`All checks passed!`)
 2. `uv run mypy src tests` — passed (`Success: no issues found in 34 source files`)
-3. `uv run pytest` — passed (`118 passed in 0.55s`)
+3. `uv run pytest` — passed (`121 passed in 0.58s`)
 
 ## Docker/runtime impact
 
@@ -33,8 +35,8 @@ No Docker, Compose, runtime service, database, broker, object storage, or extern
 
 ## Anti-drift checks
 
-- Event-time correctness: split assignment uses `feature_ts`; no ingest timestamp participates in IDs or hashes.
-- Leakage prevention: labels are explicit row outputs, never feature values; `label_ts > feature_ts` is enforced.
+- Event-time correctness: split assignment uses `feature_ts`; snapshot rows must match exactly one stored split window; no ingest timestamp participates in IDs or hashes.
+- Leakage prevention: labels are explicit row outputs, never feature values; mixed-case label-as-feature variants fail closed; `label_ts > feature_ts` is enforced.
 - Reproducibility: row IDs and dataset hash are derived from deterministic feature, split, label, and lineage fields.
 - MVP scope preserved: fixture/local spot examples only; no leverage, derivatives, margin, shorting, model training, strategy, risk/order path, paper/live routing, or live capital.
 

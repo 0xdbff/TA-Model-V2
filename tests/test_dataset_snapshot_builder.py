@@ -6,13 +6,19 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from ta_model.contracts.datasets import (
     ChronologicalSplitWindow,
+    DatasetRow,
+    DatasetSnapshot,
     DatasetSplit,
     LabelMethod,
     LabelObservation,
     LabelRule,
+    build_dataset_hash,
+    build_dataset_row_id,
+    build_dataset_snapshot_id,
     build_label_observation,
     build_label_rule,
 )
@@ -259,6 +265,80 @@ def test_no_hidden_label_as_feature_leakage_and_explicit_return_label() -> None:
     assert "future_1m" not in snapshot.rows[0].feature_values
 
 
+def test_mixed_case_label_rule_name_cannot_leak_as_feature() -> None:
+    leaked = _feature(0, "100").model_copy(update={"values": {"future_1m": Decimal("1")}})
+    with pytest.raises(DatasetSnapshotBuilderError, match="label fields"):
+        build_chronological_dataset_snapshot(
+            feature_vectors=(leaked,),
+            label_observations=_observations(),
+            split_windows=_split_windows(),
+            label_rule=build_label_rule(
+                name="Future_1M", horizon_seconds=60, method=LabelMethod.FUTURE_VALUE
+            ),
+        )
+
+
+def test_dataset_snapshot_rejects_row_split_that_contradicts_split_windows() -> None:
+    snapshot = build_chronological_dataset_snapshot(
+        feature_vectors=_features(),
+        label_observations=_observations(),
+        split_windows=_split_windows(),
+        label_rule=_label_rule(),
+    )
+    wrong_row = _row_with_split(snapshot.rows[0], DatasetSplit.VALIDATION)
+    rows = (wrong_row,) + snapshot.rows[1:]
+    counts = {split: 0 for split in DatasetSplit}
+    for row in rows:
+        counts[row.split] += 1
+    dataset_hash = build_dataset_hash(
+        rows=rows,
+        split_windows=snapshot.split_windows,
+        label_rule=snapshot.label_rule,
+        source_feature_snapshot_ids=snapshot.source_feature_snapshot_ids,
+    )
+
+    with pytest.raises(ValidationError, match="row split must match split window"):
+        DatasetSnapshot(
+            dataset_snapshot_id=build_dataset_snapshot_id(dataset_hash=dataset_hash),
+            dataset_hash=dataset_hash,
+            feature_versions=snapshot.feature_versions,
+            feature_vector_ids=tuple(row.feature_vector_id for row in rows),
+            source_feature_snapshot_ids=snapshot.source_feature_snapshot_ids,
+            split_windows=snapshot.split_windows,
+            label_rule=snapshot.label_rule,
+            row_ids=tuple(row.row_id for row in rows),
+            row_counts_by_split=counts,
+            rows=rows,
+        )
+
+
+def test_feature_outside_all_split_windows_fails_closed() -> None:
+    windows = (
+        ChronologicalSplitWindow(
+            split=DatasetSplit.TRAIN,
+            start_ts=START,
+            end_ts=START + timedelta(minutes=2),
+        ),
+        ChronologicalSplitWindow(
+            split=DatasetSplit.VALIDATION,
+            start_ts=START + timedelta(minutes=2),
+            end_ts=START + timedelta(minutes=4),
+        ),
+        ChronologicalSplitWindow(
+            split=DatasetSplit.TEST,
+            start_ts=START + timedelta(minutes=4),
+            end_ts=START + timedelta(minutes=5),
+        ),
+    )
+    with pytest.raises(DatasetSnapshotBuilderError, match="outside configured split windows"):
+        build_chronological_dataset_snapshot(
+            feature_vectors=_features(),
+            label_observations=_observations(),
+            split_windows=windows,
+            label_rule=_label_rule(),
+        )
+
+
 def test_split_windows_must_be_ordered_and_non_overlapping() -> None:
     windows = _split_windows()
     overlapping = (
@@ -285,3 +365,37 @@ def test_split_windows_must_be_ordered_and_non_overlapping() -> None:
             split_windows=tuple(reversed(windows)),
             label_rule=_label_rule(),
         )
+
+
+def _row_with_split(row: DatasetRow, split: DatasetSplit) -> DatasetRow:
+    row_id = build_dataset_row_id(
+        feature_vector_id=row.feature_vector_id,
+        instrument_id=row.instrument_id,
+        venue_id=row.venue_id,
+        feature_ts=row.feature_ts,
+        feature_version=row.feature_version,
+        feature_values=row.feature_values,
+        feature_input_snapshot_id=row.feature_input_snapshot_id,
+        split=split,
+        label_rule_id=row.label_rule_id,
+        label_value=row.label_value,
+        label_ts=row.label_ts,
+        label_observation_id=row.label_observation_id,
+        source_feature_snapshot_ids=row.source_feature_snapshot_ids,
+    )
+    return DatasetRow(
+        row_id=row_id,
+        feature_vector_id=row.feature_vector_id,
+        instrument_id=row.instrument_id,
+        venue_id=row.venue_id,
+        feature_ts=row.feature_ts,
+        feature_version=row.feature_version,
+        feature_values=row.feature_values,
+        feature_input_snapshot_id=row.feature_input_snapshot_id,
+        split=split,
+        label_rule_id=row.label_rule_id,
+        label_value=row.label_value,
+        label_ts=row.label_ts,
+        label_observation_id=row.label_observation_id,
+        source_feature_snapshot_ids=row.source_feature_snapshot_ids,
+    )

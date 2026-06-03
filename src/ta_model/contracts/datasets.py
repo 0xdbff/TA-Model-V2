@@ -165,6 +165,15 @@ class DatasetSnapshot(ContractModel):
             raise ValueError("feature_versions must match rows")
         expected_counts = {split: 0 for split in DatasetSplit}
         for row in self.rows:
+            matching_windows = tuple(
+                window
+                for window in self.split_windows
+                if window.start_ts <= row.feature_ts < window.end_ts
+            )
+            if len(matching_windows) != 1:
+                raise ValueError("row feature_ts must match exactly one split window")
+            if row.split is not matching_windows[0].split:
+                raise ValueError("row split must match split window for feature_ts")
             expected_counts[row.split] += 1
         if self.row_counts_by_split != expected_counts:
             raise ValueError("row_counts_by_split must match rows")

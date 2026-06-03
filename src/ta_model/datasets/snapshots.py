@@ -156,7 +156,8 @@ def _validate_split_windows(windows: tuple[ChronologicalSplitWindow, ...]) -> No
 def _validate_no_label_as_feature_leakage(
     vectors: tuple[FeatureVector, ...], label_rule: LabelRule
 ) -> None:
-    forbidden_names = {"label", label_rule.name, f"label_{label_rule.name}"}
+    rule_name = label_rule.name.lower()
+    forbidden_names = {"label", rule_name, f"label_{rule_name}"}
     for vector in vectors:
         lower_names = {name.lower() for name in vector.values}
         if lower_names & forbidden_names:
