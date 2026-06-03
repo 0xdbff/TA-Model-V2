@@ -7,7 +7,7 @@ Traceability:
 - NFR-005: deterministic config/result IDs support reproducible reruns.
 
 Scope:
-- S5-001 fixture/local baseline outputs only. No orders, simulator gateway, paper/live
+- S5 fixture/local baseline outputs only. No orders, simulator gateway, paper/live
   routing, leverage, derivatives, shorting, margin, or autonomous model promotion.
 """
 

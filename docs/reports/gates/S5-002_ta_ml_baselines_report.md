@@ -15,6 +15,8 @@ Requirements: FR-007, FR-014, NFR-001, NFR-005
 
 Fixture assumptions: chronological windows are train `[00:00, 00:02)`, validation `[00:02, 00:04)`, and test `[00:04, 00:06)`; `close` values are 100 through 105; future-value labels are `close + 1`; `round_trip_taker_cost_bps=10` when cost handling is exercised. These are S5 proxy costs only and do not claim S6-grade slippage/TCA.
 
+Simple ML train-split metrics are in-sample because train labels are used to fit the threshold/label-mean guard. Validation and test rows remain out-of-sample with respect to label usage: their labels are used only as realized outcomes after fixed train-split parameters are applied.
+
 | Baseline | Split/window | Rows | Gross return sum | Turnover sum | Cost return sum | Net return sum | Avg exposure |
 |---|---|---:|---:|---:|---:|---:|---:|
 | TA heuristic | train | 2 | 0 | 0 | 0 | 0 | 0 |
