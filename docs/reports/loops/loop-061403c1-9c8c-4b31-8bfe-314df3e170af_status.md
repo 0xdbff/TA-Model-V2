@@ -40,7 +40,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 |---|---|---:|---|
 | #23 | S5-001 | PR #85 merged to loop | Cash/no-trade, buy-and-hold, and equal-weight basket baselines added with split-local turnover reset semantics, deterministic lineage, proxy-cost assumptions, and concrete per-window report evidence. |
 | #24 | S5-002 | PR #86 merged to loop | TA heuristic and pure-Python simple ML baselines added through shared baseline contracts with no-trade rows, train-only ML fitting, proxy-cost assumptions, and comparator report evidence. |
-| #25 | S5-003 | Open | Needs scorecard with net return, Sharpe, Sortino, Calmar, drawdown, CVaR, turnover, exposure, costs, benchmark-relative metrics. |
+| #25 | S5-003 | PR #87 merged to loop | Evaluation scorecard added with net return, Sharpe, Sortino, Calmar, max drawdown, CVaR, turnover, exposure, costs, benchmark-relative metrics, explicit undefined states, and benchmark hash lineage. |
 | #26 | S5-004 | Open | Needs baseline gate decision aggregating #23-#25 evidence with pass/fail/blockers. |
 
 ## Dependencies and sequencing
@@ -62,7 +62,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 |---|---|---|---|---|---|---|
 | #23 | S5-001 | `agent/23-S5-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-23-S5-001-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#85](https://github.com/0xdbff/TA-Model-V2/pull/85) merged | Completed after QA-requested split/window reset, chronological fail-closed validation, and concrete report-table evidence fixes. |
 | #24 | S5-002 | `agent/24-S5-002` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-24-S5-002-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#86](https://github.com/0xdbff/TA-Model-V2/pull/86) merged | Completed after QA-requested documentation caveats for S5-wide baseline contracts and in-sample train metrics. |
-| #25 | S5-003 | `agent/25-S5-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-25-S5-003-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on baseline output schema. |
+| #25 | S5-003 | `agent/25-S5-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-25-S5-003-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#87](https://github.com/0xdbff/TA-Model-V2/pull/87) merged | Completed after QA-requested benchmark report hash lineage fix and evidence count correction. |
 | #26 | S5-004 | `agent/26-S5-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-26-S5-004-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on #23-#25 evidence. |
 
 ## Validation plan
@@ -98,6 +98,10 @@ Additional focused checks expected:
   merge: baseline contracts now say S5-wide fixture/local scope and the S5-002
   report explicitly calls out simple-ML train metrics as in-sample while
   validation/test decisions remain out-of-sample with respect to label usage.
+- #25 initial review found a blocking reproducibility gap: benchmark-relative
+  metrics used `benchmark_report` rows but did not record benchmark report hash
+  when the benchmark was not in scored `reports`. Fixed before merge by adding
+  `BenchmarkConfig.benchmark_report_hash`, regression coverage, and report evidence.
 - Baselines must consume S4 dataset/feature contracts where feasible; fixture/local
   deterministic data is acceptable only at appropriate test/report boundaries.
 - S5 cost modeling is pre-S6; conservative/proxy costs must be documented and not
@@ -122,6 +126,10 @@ Additional focused checks expected:
   passed; `uv run mypy src tests` passed; `uv run pytest` passed with 140 tests.
 - Loop validation after #24 merge: `uv run ruff check .` passed; `uv run mypy src tests`
   passed; `uv run pytest` passed with 140 tests.
+- #25 PR #87 pre-merge validation in sub-agent worktree: `uv run ruff check .`
+  passed; `uv run mypy src tests` passed; `uv run pytest` passed with 148 tests.
+- Loop validation after #25 merge: `uv run ruff check .` passed; `uv run mypy src tests`
+  passed; `uv run pytest` passed with 148 tests.
 
 ## Human-sync decisions
 
@@ -129,6 +137,6 @@ None yet.
 
 ## Remaining blockers
 
-- Sub-agent work for #25-#26 is not merged yet.
+- Sub-agent work for #26 is not merged yet.
 - Final integration PR is not ready until all S5 evidence is implemented,
   reviewed, merged to the loop branch, and validated as an integrated whole.
