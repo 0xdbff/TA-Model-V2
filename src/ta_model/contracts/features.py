@@ -2,11 +2,13 @@
 
 Traceability:
 - FR-004: feature vectors carry event-time availability and clean-data lineage.
+- FR-005: liquidity/cost feature fixtures carry quote event-time inputs.
 - NFR-001: deterministic IDs are derived from event-time inputs, not ingest time.
 
 Scope:
-- S4-001 defines TA feature contracts only; no labels, model, strategy, order,
-  paper/live routing, leverage, derivatives, or liquidity/cost feature scope.
+- S4-001 defines shared feature-vector contracts; S4-002 adds fixture-only quote
+  inputs for liquidity/cost features. No labels, model, strategy, order,
+  paper/live routing, leverage, derivatives, or full quote ingestion scope.
 """
 
 from __future__ import annotations
@@ -20,7 +22,13 @@ from typing import Self
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
+from ta_model.contracts.instrument_master import (
+    CanonicalId,
+    ContractModel,
+    NonEmptyString,
+    NonNegativeDecimal,
+    PositiveDecimal,
+)
 
 
 class FeatureQualityFlag(StrEnum):
@@ -34,6 +42,46 @@ class FeatureQualityFlag(StrEnum):
 
 
 FeatureValue = Decimal | None
+
+
+class QuoteFeatureInput(ContractModel):
+    """Minimal best-bid/ask feature input aligned to docs/07 quote fields.
+
+    This is fixture-only feature-engine input, not full quote/order-book ingestion.
+    Identity intentionally excludes ingest_ts so replay is event-time deterministic.
+    """
+
+    quote_feature_input_id: CanonicalId
+    instrument_id: CanonicalId
+    venue_id: CanonicalId
+    event_ts: AwareDatetime
+    best_bid: PositiveDecimal
+    best_ask: PositiveDecimal
+    bid_size: NonNegativeDecimal | None = None
+    ask_size: NonNegativeDecimal | None = None
+    source_ts: AwareDatetime | None = None
+    ingest_ts: AwareDatetime
+    quality_flags: tuple[NonEmptyString, ...]
+    raw_payload_id: CanonicalId
+
+    @model_validator(mode="after")
+    def quote_is_valid_and_deterministic(self) -> Self:
+        if self.best_ask <= self.best_bid:
+            raise ValueError("quote must not be crossed or locked")
+        if self.quote_feature_input_id != build_quote_feature_input_id(
+            instrument_id=self.instrument_id,
+            venue_id=self.venue_id,
+            event_ts=self.event_ts,
+            best_bid=self.best_bid,
+            best_ask=self.best_ask,
+            bid_size=self.bid_size,
+            ask_size=self.ask_size,
+            source_ts=self.source_ts,
+            quality_flags=self.quality_flags,
+            raw_payload_id=self.raw_payload_id,
+        ):
+            raise ValueError("quote_feature_input_id is not deterministic")
+        return self
 
 
 class FeatureVector(ContractModel):
@@ -122,6 +170,38 @@ def build_feature_input_snapshot_id(*, record_ids: tuple[str, ...]) -> str:
     """Build minimal clean-data lineage ID for bars available at feature_ts."""
 
     return _stable_id("FEATUREINPUT", {"record_ids": record_ids})
+
+
+def build_quote_feature_input_id(
+    *,
+    instrument_id: str,
+    venue_id: str,
+    event_ts: datetime,
+    best_bid: Decimal,
+    best_ask: Decimal,
+    bid_size: Decimal | None,
+    ask_size: Decimal | None,
+    source_ts: datetime | None,
+    quality_flags: tuple[str, ...],
+    raw_payload_id: str,
+) -> str:
+    """Build a stable quote input ID from market event-time fields, not ingest time."""
+
+    return _stable_id(
+        "QUOTEFEATUREINPUT",
+        {
+            "ask_size": _decimal_to_json(ask_size),
+            "best_ask": _decimal_to_json(best_ask),
+            "best_bid": _decimal_to_json(best_bid),
+            "bid_size": _decimal_to_json(bid_size),
+            "event_ts": event_ts.isoformat(),
+            "instrument_id": instrument_id,
+            "quality_flags": quality_flags,
+            "raw_payload_id": raw_payload_id,
+            "source_ts": None if source_ts is None else source_ts.isoformat(),
+            "venue_id": venue_id,
+        },
+    )
 
 
 def build_feature_snapshot(
