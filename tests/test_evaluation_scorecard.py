@@ -20,8 +20,9 @@ from ta_model.contracts.datasets import (
     build_dataset_snapshot_id,
     build_label_rule,
 )
-from ta_model.contracts.evaluation import MetricAssumptions, MetricStatus
+from ta_model.contracts.evaluation import EvaluationMetric, MetricAssumptions, MetricStatus
 from ta_model.contracts.features import FeatureValue, build_feature_vector_id
+from ta_model.evaluation.baseline_gate import validate_s5_baseline_gate
 from ta_model.evaluation.scorecard import EvaluationBuildError, build_evaluation_scorecard
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -325,3 +326,104 @@ def test_missing_baseline_reports_are_rejected() -> None:
 
     with pytest.raises(EvaluationBuildError, match="at least one baseline report is required"):
         build_evaluation_scorecard((), benchmark_report=cash)
+
+
+def test_s5_baseline_gate_passes_complete_scorecard_with_cited_evidence() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "PASS"
+    assert gate.blockers == ()
+    assert "benchmark-relative net return" in gate.required_metric_families
+    assert "simple_ml" in gate.required_baselines
+
+
+def test_s5_baseline_gate_blocks_missing_simple_ml_baseline() -> None:
+    reports = tuple(
+        _report(kind) for kind in BaselineKind if kind is not BaselineKind.SIMPLE_ML
+    )
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required baseline simple_ml" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_missing_evidence_report() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required evidence report S5-002" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_missing_benchmark_relative_metric() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    first_score = scorecard.scores[0].model_copy(
+        update={
+            "benchmark_relative_net_return": EvaluationMetric(
+                value=None,
+                status=MetricStatus.BLOCKED,
+                reason="benchmark alignment mismatch",
+            )
+        }
+    )
+    blocked_scorecard = scorecard.model_copy(
+        update={"scores": (first_score, *scorecard.scores[1:])}
+    )
+
+    gate = validate_s5_baseline_gate(
+        blocked_scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert any("benchmark-relative net return is blocked" in blocker for blocker in gate.blockers)
+
+
+def test_s5_baseline_gate_accepts_undefined_risk_metrics_with_reasons() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    assert any(score.sortino.status is MetricStatus.NOT_APPLICABLE for score in scorecard.scores)
+    assert any(score.calmar.status is MetricStatus.NOT_APPLICABLE for score in scorecard.scores)
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "PASS"

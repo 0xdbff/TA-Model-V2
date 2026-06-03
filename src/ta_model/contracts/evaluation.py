@@ -32,6 +32,14 @@ class MetricStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class BaselineGateStatus(StrEnum):
+    """S5 baseline gate acceptance state."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+    BLOCKED = "BLOCKED"
+
+
 class EvaluationMetric(ContractModel):
     """One scorecard metric with explicit undefined/blocker handling."""
 
@@ -126,6 +134,27 @@ class EvaluationScorecard(ContractModel):
             raise ValueError("scorecard_hash is not deterministic")
         if self.scorecard_id != build_scorecard_id(scorecard_hash=self.scorecard_hash):
             raise ValueError("scorecard_id is not deterministic")
+        return self
+
+
+class BaselineGateDecision(ContractModel):
+    """Aggregated S5 baseline-gate decision for fixed-comparator readiness."""
+
+    status: BaselineGateStatus
+    scorecard_id: CanonicalId
+    scorecard_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    required_baselines: tuple[NonEmptyString, ...]
+    required_metric_families: tuple[NonEmptyString, ...]
+    evidence_paths: tuple[NonEmptyString, ...]
+    blockers: tuple[NonEmptyString, ...] = ()
+    caveats: tuple[NonEmptyString, ...] = ()
+
+    @model_validator(mode="after")
+    def status_matches_blockers(self) -> Self:
+        if self.status is BaselineGateStatus.PASS and self.blockers:
+            raise ValueError("passing baseline gates cannot include blockers")
+        if self.status is not BaselineGateStatus.PASS and not self.blockers:
+            raise ValueError("non-passing baseline gates require blockers")
         return self
 
 

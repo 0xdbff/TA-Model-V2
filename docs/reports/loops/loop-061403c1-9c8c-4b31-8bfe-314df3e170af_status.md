@@ -41,7 +41,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 | #23 | S5-001 | PR #85 merged to loop | Cash/no-trade, buy-and-hold, and equal-weight basket baselines added with split-local turnover reset semantics, deterministic lineage, proxy-cost assumptions, and concrete per-window report evidence. |
 | #24 | S5-002 | PR #86 merged to loop | TA heuristic and pure-Python simple ML baselines added through shared baseline contracts with no-trade rows, train-only ML fitting, proxy-cost assumptions, and comparator report evidence. |
 | #25 | S5-003 | PR #87 merged to loop | Evaluation scorecard added with net return, Sharpe, Sortino, Calmar, max drawdown, CVaR, turnover, exposure, costs, benchmark-relative metrics, explicit undefined states, and benchmark hash lineage. |
-| #26 | S5-004 | Open | Needs baseline gate decision aggregating #23-#25 evidence with pass/fail/blockers. |
+| #26 | S5-004 | PR pending | Baseline gate decision added with PASS result, caveats, and blocker tests for missing baseline/evidence/benchmark-relative metrics. |
 
 ## Dependencies and sequencing
 
@@ -63,7 +63,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 | #23 | S5-001 | `agent/23-S5-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-23-S5-001-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#85](https://github.com/0xdbff/TA-Model-V2/pull/85) merged | Completed after QA-requested split/window reset, chronological fail-closed validation, and concrete report-table evidence fixes. |
 | #24 | S5-002 | `agent/24-S5-002` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-24-S5-002-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#86](https://github.com/0xdbff/TA-Model-V2/pull/86) merged | Completed after QA-requested documentation caveats for S5-wide baseline contracts and in-sample train metrics. |
 | #25 | S5-003 | `agent/25-S5-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-25-S5-003-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | [#87](https://github.com/0xdbff/TA-Model-V2/pull/87) merged | Completed after QA-requested benchmark report hash lineage fix and evidence count correction. |
-| #26 | S5-004 | `agent/26-S5-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-26-S5-004-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on #23-#25 evidence. |
+| #26 | S5-004 | `agent/26-S5-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-26-S5-004-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Implemented locally; gate report decision is PASS with S5 proxy-cost and simple-ML caveats. |
 
 ## Validation plan
 
@@ -130,6 +130,8 @@ Additional focused checks expected:
   passed; `uv run mypy src tests` passed; `uv run pytest` passed with 148 tests.
 - Loop validation after #25 merge: `uv run ruff check .` passed; `uv run mypy src tests`
   passed; `uv run pytest` passed with 148 tests.
+- #26 pre-PR validation in sub-agent worktree: `uv run ruff check .` passed;
+  `uv run mypy src tests` passed; `uv run pytest` passed with 153 tests.
 
 ## Human-sync decisions
 
@@ -137,6 +139,6 @@ None yet.
 
 ## Remaining blockers
 
-- Sub-agent work for #26 is not merged yet.
+- Sub-agent work for #26 is implemented but not merged yet.
 - Final integration PR is not ready until all S5 evidence is implemented,
   reviewed, merged to the loop branch, and validated as an integrated whole.
