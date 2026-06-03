@@ -1,18 +1,22 @@
-"""Streaming data-health metric contracts and deterministic evaluator.
+"""Streaming data-health metric contracts and deterministic fail-closed gate.
 
 Traceability:
 - FR-002: stream freshness, sequence gaps, duplicates, and reconnects measured.
-- NFR-006: stale critical feed detection contract for later fail-closed behavior.
+- NFR-006: stale critical feed detection and scoped fail-closed signal contract.
+- RISK-006: affected venue/source health signal for later halt/reconciliation wiring.
 
 Scope:
-- S3-002 only emits structured health/metric records for synthetic stream events.
-- No strategy/risk fail-closed signal, event bus, Prometheus/Grafana, Docker service,
+- S3-002 emits structured health/metric records for synthetic stream events.
+- S3-003 converts those records into reusable scoped data-health signals.
+- No strategy/risk order blocking, event bus, Prometheus/Grafana, Docker service,
   real connector stream, live capital, leverage, margin, derivatives, or shorting path
   is introduced here.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -42,6 +46,23 @@ class StreamHealthStatus(StrEnum):
 
     HEALTHY = "healthy"
     DEGRADED = "degraded"
+
+
+class DataHealthStatus(StrEnum):
+    """Downstream data-health state for one scoped stream health record."""
+
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    BLOCKED = "blocked"
+
+
+class DataHealthReasonCode(StrEnum):
+    """Stable reason codes for strategy/risk consumers and audit evidence."""
+
+    STREAM_HEALTHY = "stream_healthy"
+    CRITICAL_FRESHNESS_STALE = "critical_freshness_stale"
+    CRITICAL_STREAM_HEALTH_BREACH = "critical_stream_health_breach"
+    NON_CRITICAL_STREAM_DEGRADED = "non_critical_stream_degraded"
 
 
 class StreamHealthCheck(StrEnum):
@@ -132,6 +153,89 @@ class StreamHealthRecord(ContractModel):
         if self.status is StreamHealthStatus.DEGRADED and not self.issues:
             raise ValueError("degraded stream health record requires at least one issue")
         return self
+
+
+class DataHealthGatePolicy(ContractModel):
+    """Fail-closed policy for turning stream health records into data-health signals."""
+
+    critical_checks: tuple[StreamHealthCheck, ...] = (StreamHealthCheck.FRESHNESS,)
+
+
+class DataHealthSignal(ContractModel):
+    """Reusable scoped data-health signal emitted by the S3-003 gate.
+
+    `blocks_trading=True` is a signal for future strategy/risk layers only; this
+    contract does not place orders, alter the risk engine, or bypass the kill switch.
+    """
+
+    signal_id: NonEmptyString
+    status: DataHealthStatus
+    reason_codes: tuple[DataHealthReasonCode, ...]
+    blocks_trading: bool
+    blocked_instrument_id: CanonicalId | None = None
+    source_health_event_id: NonEmptyString
+    source_health_status: StreamHealthStatus
+    source_scope: StreamHealthScope
+    source_checks: tuple[StreamHealthCheck, ...]
+    source_metric_names: tuple[StreamHealthMetricName, ...]
+    evaluation_ts: AwareDatetime
+
+    @model_validator(mode="after")
+    def blocked_status_matches_blocks_trading(self) -> DataHealthSignal:
+        if self.status is DataHealthStatus.BLOCKED and not self.blocks_trading:
+            raise ValueError("blocked data-health signal must set blocks_trading")
+        if self.blocks_trading and self.status is not DataHealthStatus.BLOCKED:
+            raise ValueError("only blocked data-health signals may set blocks_trading")
+        return self
+
+
+class DataHealthGate:
+    """Deterministic fail-closed converter for S3-002 stream health records."""
+
+    def __init__(self, policy: DataHealthGatePolicy | None = None) -> None:
+        self.policy = policy or DataHealthGatePolicy()
+
+    def evaluate(self, record: StreamHealthRecord) -> DataHealthSignal:
+        """Return a scoped data-health signal without broadening affected scope."""
+
+        source_checks = tuple(issue.check for issue in record.issues)
+        source_metric_names = tuple(metric.name for metric in record.metrics if metric.breached)
+        critical_breached = any(check in self.policy.critical_checks for check in source_checks)
+
+        if record.status is StreamHealthStatus.HEALTHY:
+            status = DataHealthStatus.HEALTHY
+            reason_codes = (DataHealthReasonCode.STREAM_HEALTHY,)
+            blocks_trading = False
+        elif critical_breached:
+            status = DataHealthStatus.BLOCKED
+            reason_codes = (_critical_reason_code(source_checks),)
+            blocks_trading = True
+        else:
+            status = DataHealthStatus.DEGRADED
+            reason_codes = (DataHealthReasonCode.NON_CRITICAL_STREAM_DEGRADED,)
+            blocks_trading = False
+
+        return DataHealthSignal(
+            signal_id=_data_health_signal_id(record),
+            status=status,
+            reason_codes=reason_codes,
+            blocks_trading=blocks_trading,
+            blocked_instrument_id=record.scope.instrument_id if blocks_trading else None,
+            source_health_event_id=record.event_id,
+            source_health_status=record.status,
+            source_scope=record.scope,
+            source_checks=source_checks,
+            source_metric_names=source_metric_names,
+            evaluation_ts=record.evaluation_ts,
+        )
+
+    def evaluate_many(
+        self,
+        records: tuple[StreamHealthRecord, ...],
+    ) -> tuple[DataHealthSignal, ...]:
+        """Convert a deterministic fixture batch of stream health records."""
+
+        return tuple(self.evaluate(record) for record in records)
 
 
 class StreamHealthEvaluator:
@@ -373,6 +477,29 @@ def _sequence_for(event: StreamEvent) -> int | None:
     if isinstance(event, TradeEvent | QuoteEvent | OrderBookEvent):
         return event.sequence
     return None
+
+
+def _critical_reason_code(checks: tuple[StreamHealthCheck, ...]) -> DataHealthReasonCode:
+    if StreamHealthCheck.FRESHNESS in checks:
+        return DataHealthReasonCode.CRITICAL_FRESHNESS_STALE
+    return DataHealthReasonCode.CRITICAL_STREAM_HEALTH_BREACH
+
+
+def _data_health_signal_id(record: StreamHealthRecord) -> str:
+    subscription_id, source_id, venue_id, channel, instrument_id = record.scope.key()
+    canonical_payload = json.dumps(
+        {
+            "channel": channel,
+            "event_id": record.event_id,
+            "instrument_id": instrument_id,
+            "source_id": source_id,
+            "subscription_id": subscription_id,
+            "venue_id": venue_id,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return f"data-health:{hashlib.sha256(canonical_payload.encode()).hexdigest()}"
 
 
 def _seconds(value: timedelta) -> Decimal:

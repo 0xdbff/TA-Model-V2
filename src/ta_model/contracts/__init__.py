@@ -48,6 +48,11 @@ from ta_model.contracts.market_data import (
     TradeSide,
 )
 from ta_model.contracts.stream_health import (
+    DataHealthGate,
+    DataHealthGatePolicy,
+    DataHealthReasonCode,
+    DataHealthSignal,
+    DataHealthStatus,
     StreamHealthCheck,
     StreamHealthEvaluator,
     StreamHealthIssue,
@@ -126,6 +131,11 @@ __all__ = [
     "VenueType",
     "BookLevel",
     "ConnectorStatus",
+    "DataHealthGate",
+    "DataHealthGatePolicy",
+    "DataHealthReasonCode",
+    "DataHealthSignal",
+    "DataHealthStatus",
     "DisconnectReason",
     "HeartbeatEvent",
     "HeartbeatPolicy",
