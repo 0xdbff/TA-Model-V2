@@ -139,6 +139,11 @@ Additional focused checks expected:
   `uv run mypy src tests` passed; `uv run pytest` passed with 158 tests.
 - Loop validation after #26 merge: `uv run ruff check .` passed; `uv run mypy src tests`
   passed; `uv run pytest` passed with 158 tests.
+- Final integrated loop validation before PR: `uv run ruff check .` passed;
+  `uv run mypy src tests` passed; `uv run pytest` passed with 158 tests.
+- Docker/runtime check: `docker compose config` passed with no default active services;
+  `docker compose --profile stream config` passed. S5 additions introduced no
+  Docker/runtime service changes.
 
 ## Human-sync decisions
 
@@ -147,4 +152,4 @@ None yet.
 ## Remaining blockers
 
 - No S5 sub-agent blockers remain.
-- Final integration PR is ready after final loop evidence update and integrated validation.
+- Final integration PR is ready to open from `agent/loop-061403c1-9c8c-4b31-8bfe-314df3e170af` into `dev`.
