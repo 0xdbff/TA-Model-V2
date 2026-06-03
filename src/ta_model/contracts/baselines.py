@@ -7,7 +7,7 @@ Traceability:
 - NFR-005: deterministic config/result IDs support reproducible reruns.
 
 Scope:
-- S5-001 fixture/local baseline outputs only. No orders, simulator gateway, paper/live
+- S5 fixture/local baseline outputs only. No orders, simulator gateway, paper/live
   routing, leverage, derivatives, shorting, margin, or autonomous model promotion.
 """
 
@@ -27,11 +27,13 @@ from ta_model.contracts.instrument_master import CanonicalId, ContractModel, Non
 
 
 class BaselineKind(StrEnum):
-    """Supported deterministic S5-001 baseline families."""
+    """Supported deterministic S5 baseline families."""
 
     CASH = "cash_no_trade"
     BUY_AND_HOLD = "buy_and_hold"
     EQUAL_WEIGHT_BASKET = "equal_weight_basket"
+    TA_HEURISTIC = "ta_heuristic"
+    SIMPLE_ML = "simple_ml"
 
 
 class BaselineConfig(ContractModel):
@@ -45,6 +47,7 @@ class BaselineConfig(ContractModel):
         "round_trip_taker_cost_bps",
         "taker_fee_rate",
     )
+    parameters: tuple[NonEmptyString, ...] = ()
     seed: int = 0
 
     @model_validator(mode="after")
@@ -53,6 +56,7 @@ class BaselineConfig(ContractModel):
             name=self.name,
             kind=self.kind,
             cost_feature_preference=self.cost_feature_preference,
+            parameters=self.parameters,
             seed=self.seed,
         )
         if self.baseline_config_hash != expected_hash:
@@ -156,12 +160,14 @@ def build_baseline_config(
     name: str,
     kind: BaselineKind,
     cost_feature_preference: tuple[str, ...] = ("round_trip_taker_cost_bps", "taker_fee_rate"),
+    parameters: tuple[str, ...] = (),
     seed: int = 0,
 ) -> BaselineConfig:
     config_hash = build_baseline_config_hash(
         name=name,
         kind=kind,
         cost_feature_preference=cost_feature_preference,
+        parameters=parameters,
         seed=seed,
     )
     return BaselineConfig(
@@ -170,18 +176,25 @@ def build_baseline_config(
         name=name,
         kind=kind,
         cost_feature_preference=cost_feature_preference,
+        parameters=parameters,
         seed=seed,
     )
 
 
 def build_baseline_config_hash(
-    *, name: str, kind: BaselineKind, cost_feature_preference: tuple[str, ...], seed: int
+    *,
+    name: str,
+    kind: BaselineKind,
+    cost_feature_preference: tuple[str, ...],
+    parameters: tuple[str, ...],
+    seed: int,
 ) -> str:
     return _hash(
         {
             "cost_feature_preference": cost_feature_preference,
             "kind": kind.value,
             "name": name,
+            "parameters": parameters,
             "seed": seed,
         }
     )

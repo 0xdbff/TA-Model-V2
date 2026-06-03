@@ -147,6 +147,8 @@ def _windowed_snapshot(
     *,
     instruments: tuple[str, ...] = ("FIXTURE_SPOT:BTC-USD",),
     extra_values: dict[str, FeatureValue] | None = None,
+    per_index_values: tuple[dict[str, FeatureValue], ...] | None = None,
+    label_values: tuple[str, ...] | None = None,
 ) -> DatasetSnapshot:
     label_rule = build_label_rule(
         name="future_1m", horizon_seconds=60, method=LabelMethod.FUTURE_VALUE
@@ -163,11 +165,15 @@ def _windowed_snapshot(
     for index in range(6):
         feature_ts = START + timedelta(minutes=index)
         close = Decimal("100") + Decimal(index)
-        label_value = close + Decimal("1")
+        label_value = (
+            Decimal(label_values[index]) if label_values is not None else close + Decimal("1")
+        )
         for instrument_id in instruments:
             values: dict[str, FeatureValue] = {"close": close}
             if extra_values is not None:
                 values.update(extra_values)
+            if per_index_values is not None:
+                values.update(per_index_values[index])
             input_snapshot_id = f"FEATUREINPUT:S5-001:WINDOW:{instrument_id}:{index}"
             feature_vector_id = build_feature_vector_id(
                 instrument_id=instrument_id,
@@ -368,6 +374,108 @@ def test_equal_weight_basket_resets_turnover_per_instrument_at_each_split() -> N
         assert len(next_rows) == 2
         assert {row.turnover for row in next_rows} == {Decimal("0")}
         assert {row.cost_return for row in next_rows} == {Decimal("0")}
+
+
+def test_ta_heuristic_is_point_in_time_long_only_and_keeps_no_trade_rows() -> None:
+    snapshot = _windowed_snapshot(
+        per_index_values=(
+            {},
+            {"one_bar_return": Decimal("-0.01")},
+            {"one_bar_return": Decimal("0.02")},
+            {"momentum_3": Decimal("0.03"), "one_bar_return": Decimal("-0.02")},
+            {"momentum_3": Decimal("0")},
+            {"momentum_3": Decimal("0.04")},
+        ),
+        extra_values={"round_trip_taker_cost_bps": Decimal("10")},
+    )
+
+    config = build_baseline_config(name="ta", kind=BaselineKind.TA_HEURISTIC)
+    report = run_baseline(snapshot, config)
+    repeated = run_baseline(snapshot, config)
+
+    assert len(report.rows) == len(snapshot.rows)
+    assert report.baseline_report_id == repeated.baseline_report_id
+    assert report.row_ids == repeated.row_ids
+    assert {row.target_weight for row in report.rows} <= {Decimal("0"), Decimal("1")}
+    assert report.rows[0].no_trade_reason == "ta_missing_signal_feature"
+    assert report.rows[1].no_trade_reason == "ta_non_positive_signal"
+    assert report.rows[2].target_weight == Decimal("1")
+    assert report.rows[2].no_trade_reason is None
+    assert report.rows[2].turnover == Decimal("1")
+    assert report.rows[2].cost_return == Decimal("0.001")
+    assert report.rows[3].target_weight == Decimal("1")
+    assert report.rows[3].turnover == Decimal("0")
+    assert report.rows[4].no_trade_reason == "ta_non_positive_signal"
+    assert report.rows[5].target_weight == Decimal("1")
+
+
+def test_simple_ml_fits_train_only_and_validation_test_labels_do_not_change_decisions() -> None:
+    features: tuple[dict[str, FeatureValue], ...] = (
+        {"one_bar_return": Decimal("-0.01")},
+        {"one_bar_return": Decimal("0.01")},
+        {"one_bar_return": Decimal("0.02")},
+        {"one_bar_return": Decimal("-0.02")},
+        {"one_bar_return": Decimal("0.03")},
+        {},
+    )
+    base = _windowed_snapshot(per_index_values=features)
+    changed_outcome_labels = _windowed_snapshot(
+        per_index_values=features,
+        label_values=("101", "102", "1", "999", "2", "999"),
+    )
+
+    config = build_baseline_config(
+        name="simple-ml",
+        kind=BaselineKind.SIMPLE_ML,
+        parameters=("fixed_feature=one_bar_return", "fit_split=train"),
+    )
+    first = run_baseline(base, config)
+    second = run_baseline(changed_outcome_labels, config)
+
+    assert "Simple ML fit uses train split only" in first.cost_assumption
+    assert [row.target_weight for row in first.rows] == [row.target_weight for row in second.rows]
+    assert [row.no_trade_reason for row in first.rows] == [
+        row.no_trade_reason for row in second.rows
+    ]
+    assert [row.target_weight for row in first.rows] == [
+        Decimal("0"),
+        Decimal("1"),
+        Decimal("1"),
+        Decimal("0"),
+        Decimal("1"),
+        Decimal("0"),
+    ]
+    assert first.rows[5].no_trade_reason == "ml_missing_signal_feature"
+
+
+def test_simple_ml_fails_closed_without_train_features_and_uses_train_labels_only() -> None:
+    no_train_features = _windowed_snapshot(
+        per_index_values=(
+            {},
+            {},
+            {"one_bar_return": Decimal("0.02")},
+            {"one_bar_return": Decimal("0.02")},
+            {"one_bar_return": Decimal("0.02")},
+            {"one_bar_return": Decimal("0.02")},
+        )
+    )
+    with pytest.raises(BaselineBuildError, match="train split numeric features"):
+        run_baseline(
+            no_train_features,
+            build_baseline_config(name="simple-ml", kind=BaselineKind.SIMPLE_ML),
+        )
+
+    negative_train_labels = _windowed_snapshot(
+        per_index_values=tuple({"one_bar_return": Decimal("0.02")} for _ in range(6)),
+        label_values=("99", "99", "999", "999", "999", "999"),
+    )
+    report = run_baseline(
+        negative_train_labels,
+        build_baseline_config(name="simple-ml", kind=BaselineKind.SIMPLE_ML),
+    )
+
+    assert {row.target_weight for row in report.rows} == {Decimal("0")}
+    assert {row.no_trade_reason for row in report.rows} == {"ml_train_mean_not_positive"}
 
 
 def test_future_return_labels_do_not_require_close_and_are_not_repriced() -> None:
