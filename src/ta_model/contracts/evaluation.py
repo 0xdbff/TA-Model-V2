@@ -20,6 +20,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
+from ta_model.contracts.baselines import BaselineKind
 from ta_model.contracts.datasets import DatasetSplit
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
 
@@ -30,6 +31,14 @@ class MetricStatus(StrEnum):
     AVAILABLE = "available"
     NOT_APPLICABLE = "not_applicable"
     BLOCKED = "blocked"
+
+
+class BaselineGateStatus(StrEnum):
+    """S5 baseline gate acceptance state."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+    BLOCKED = "BLOCKED"
 
 
 class EvaluationMetric(ContractModel):
@@ -87,6 +96,7 @@ class BaselineSplitScore(ContractModel):
 
     baseline_report_id: CanonicalId
     baseline_name: NonEmptyString
+    baseline_kind: BaselineKind
     split: DatasetSplit
     observation_count: int = Field(ge=0)
     net_return: EvaluationMetric
@@ -126,6 +136,27 @@ class EvaluationScorecard(ContractModel):
             raise ValueError("scorecard_hash is not deterministic")
         if self.scorecard_id != build_scorecard_id(scorecard_hash=self.scorecard_hash):
             raise ValueError("scorecard_id is not deterministic")
+        return self
+
+
+class BaselineGateDecision(ContractModel):
+    """Aggregated S5 baseline-gate decision for fixed-comparator readiness."""
+
+    status: BaselineGateStatus
+    scorecard_id: CanonicalId
+    scorecard_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    required_baselines: tuple[NonEmptyString, ...]
+    required_metric_families: tuple[NonEmptyString, ...]
+    evidence_paths: tuple[NonEmptyString, ...]
+    blockers: tuple[NonEmptyString, ...] = ()
+    caveats: tuple[NonEmptyString, ...] = ()
+
+    @model_validator(mode="after")
+    def status_matches_blockers(self) -> Self:
+        if self.status is BaselineGateStatus.PASS and self.blockers:
+            raise ValueError("passing baseline gates cannot include blockers")
+        if self.status is not BaselineGateStatus.PASS and not self.blockers:
+            raise ValueError("non-passing baseline gates require blockers")
         return self
 
 

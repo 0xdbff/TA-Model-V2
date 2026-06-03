@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -20,8 +21,9 @@ from ta_model.contracts.datasets import (
     build_dataset_snapshot_id,
     build_label_rule,
 )
-from ta_model.contracts.evaluation import MetricAssumptions, MetricStatus
+from ta_model.contracts.evaluation import EvaluationMetric, MetricAssumptions, MetricStatus
 from ta_model.contracts.features import FeatureValue, build_feature_vector_id
+from ta_model.evaluation.baseline_gate import validate_s5_baseline_gate
 from ta_model.evaluation.scorecard import EvaluationBuildError, build_evaluation_scorecard
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -182,6 +184,19 @@ def _snapshot(
     )
 
 
+def _temp_gate_evidence(tmp_path: Path, scorecard_id: str, scorecard_hash: str) -> tuple[str, ...]:
+    s5_001 = tmp_path / "S5-001_deterministic_baselines_report.md"
+    s5_002 = tmp_path / "S5-002_ta_ml_baselines_report.md"
+    s5_003 = tmp_path / "S5-003_evaluation_scorecard_report.md"
+    s5_001.write_text("S5-001 evidence", encoding="utf-8")
+    s5_002.write_text("S5-002 evidence", encoding="utf-8")
+    s5_003.write_text(
+        f"Scorecard ID: `{scorecard_id}`\nScorecard hash: `{scorecard_hash}`\n",
+        encoding="utf-8",
+    )
+    return (str(s5_001), str(s5_002), str(s5_003))
+
+
 def test_scorecard_consumes_s5_baseline_reports_and_propagates_costs_turnover_exposure() -> None:
     cash = _report(BaselineKind.CASH)
     buy_hold = _report(BaselineKind.BUY_AND_HOLD)
@@ -325,3 +340,227 @@ def test_missing_baseline_reports_are_rejected() -> None:
 
     with pytest.raises(EvaluationBuildError, match="at least one baseline report is required"):
         build_evaluation_scorecard((), benchmark_report=cash)
+
+
+def test_s5_baseline_gate_passes_complete_scorecard_with_cited_evidence() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "PASS"
+    assert gate.blockers == ()
+    assert "benchmark-relative net return" in gate.required_metric_families
+    assert "simple_ml" in gate.required_baselines
+
+
+def test_s5_baseline_gate_blocks_missing_simple_ml_baseline() -> None:
+    reports = tuple(
+        _report(kind) for kind in BaselineKind if kind is not BaselineKind.SIMPLE_ML
+    )
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required baseline simple_ml" in gate.blockers
+
+
+def test_s5_baseline_gate_uses_stable_kind_not_spoofed_display_names(
+    tmp_path: Path,
+) -> None:
+    snapshot = _snapshot(
+        label_values=None,
+        per_index_values=tuple(
+            {
+                "one_bar_return": Decimal("0.01"),
+                "round_trip_taker_cost_bps": Decimal("10"),
+            }
+            for _ in range(6)
+        ),
+    )
+    spoofed_cash_reports = tuple(
+        run_baseline(snapshot, build_baseline_config(name=kind.value, kind=BaselineKind.CASH))
+        for kind in BaselineKind
+    )
+    scorecard = build_evaluation_scorecard(
+        spoofed_cash_reports, benchmark_report=spoofed_cash_reports[0]
+    )
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=_temp_gate_evidence(
+            tmp_path, scorecard.scorecard_id, scorecard.scorecard_hash
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required baseline buy_and_hold" in gate.blockers
+    assert "missing required baseline equal_weight_basket" in gate.blockers
+    assert "missing required baseline ta_heuristic" in gate.blockers
+    assert "missing required baseline simple_ml" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_train_only_required_baseline_splits(
+    tmp_path: Path,
+) -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    train_only_scorecard = scorecard.model_copy(
+        update={
+            "scores": tuple(
+                score for score in scorecard.scores if score.split is DatasetSplit.TRAIN
+            )
+        }
+    )
+
+    gate = validate_s5_baseline_gate(
+        train_only_scorecard,
+        evidence_paths=_temp_gate_evidence(
+            tmp_path,
+            train_only_scorecard.scorecard_id,
+            train_only_scorecard.scorecard_hash,
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required baseline split cash_no_trade/validation" in gate.blockers
+    assert "missing required baseline split buy_and_hold/test" in gate.blockers
+    assert "missing required baseline split simple_ml/test" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_duplicate_required_baseline_split(
+    tmp_path: Path,
+) -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    cash_train = next(
+        score
+        for score in scorecard.scores
+        if score.baseline_kind is BaselineKind.CASH and score.split is DatasetSplit.TRAIN
+    )
+    duplicated_scorecard = scorecard.model_copy(
+        update={"scores": (cash_train, *scorecard.scores)}
+    )
+
+    gate = validate_s5_baseline_gate(
+        duplicated_scorecard,
+        evidence_paths=_temp_gate_evidence(
+            tmp_path,
+            duplicated_scorecard.scorecard_id,
+            duplicated_scorecard.scorecard_hash,
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "duplicate baseline split cash_no_trade/train" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_missing_evidence_report() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required evidence report S5-002" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_nonexistent_evidence_path() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_missing_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert any("evidence path does not exist" in blocker for blocker in gate.blockers)
+
+
+def test_s5_baseline_gate_blocks_stale_scorecard_evidence(tmp_path: Path) -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    evidence_paths = _temp_gate_evidence(
+        tmp_path,
+        "EVALSCORECARD:STALESTALESTALESTALESTALESTALEST",
+        "0" * 64,
+    )
+
+    gate = validate_s5_baseline_gate(scorecard, evidence_paths=evidence_paths)
+
+    assert gate.status == "BLOCKED"
+    assert "S5-003 evidence does not match scorecard_id" in gate.blockers
+    assert "S5-003 evidence does not match scorecard_hash" in gate.blockers
+
+
+def test_s5_baseline_gate_blocks_missing_benchmark_relative_metric() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    first_score = scorecard.scores[0].model_copy(
+        update={
+            "benchmark_relative_net_return": EvaluationMetric(
+                value=None,
+                status=MetricStatus.BLOCKED,
+                reason="benchmark alignment mismatch",
+            )
+        }
+    )
+    blocked_scorecard = scorecard.model_copy(
+        update={"scores": (first_score, *scorecard.scores[1:])}
+    )
+
+    gate = validate_s5_baseline_gate(
+        blocked_scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert any("benchmark-relative net return is blocked" in blocker for blocker in gate.blockers)
+
+
+def test_s5_baseline_gate_accepts_undefined_risk_metrics_with_reasons() -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+
+    assert any(score.sortino.status is MetricStatus.NOT_APPLICABLE for score in scorecard.scores)
+    assert any(score.calmar.status is MetricStatus.NOT_APPLICABLE for score in scorecard.scores)
+    gate = validate_s5_baseline_gate(
+        scorecard,
+        evidence_paths=(
+            "docs/reports/gates/S5-001_deterministic_baselines_report.md",
+            "docs/reports/gates/S5-002_ta_ml_baselines_report.md",
+            "docs/reports/gates/S5-003_evaluation_scorecard_report.md",
+        ),
+    )
+
+    assert gate.status == "PASS"
