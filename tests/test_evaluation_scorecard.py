@@ -253,6 +253,19 @@ def test_loss_window_computes_drawdown_cvar_and_available_risk_metrics() -> None
     assert train.calmar.status is MetricStatus.AVAILABLE
 
 
+def test_benchmark_hash_is_captured_when_benchmark_is_not_scored_report() -> None:
+    cash = _report(BaselineKind.CASH)
+    buy_hold = _report(BaselineKind.BUY_AND_HOLD)
+
+    scorecard = build_evaluation_scorecard((buy_hold,), benchmark_report=cash)
+
+    assert scorecard.input_baseline_report_ids == (buy_hold.baseline_report_id,)
+    assert scorecard.input_baseline_report_hashes == (buy_hold.baseline_report_hash,)
+    assert cash.baseline_report_id not in scorecard.input_baseline_report_ids
+    assert scorecard.benchmark_config.benchmark_report_id == cash.baseline_report_id
+    assert scorecard.benchmark_config.benchmark_report_hash == cash.baseline_report_hash
+
+
 def test_empty_split_metrics_are_not_applicable_with_reason() -> None:
     snapshot_without_test = _snapshot(
         label_values=None,

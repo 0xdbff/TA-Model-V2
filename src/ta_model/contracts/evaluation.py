@@ -52,6 +52,7 @@ class BenchmarkConfig(ContractModel):
     """Benchmark selection used for relative net-return metrics."""
 
     benchmark_report_id: CanonicalId
+    benchmark_report_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     benchmark_name: NonEmptyString
     alignment: NonEmptyString = "split/instrument/venue/feature_ts exact row alignment"
 

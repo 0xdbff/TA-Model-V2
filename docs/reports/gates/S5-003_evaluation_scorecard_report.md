@@ -23,8 +23,10 @@
 
 ## Deterministic scorecard evidence
 
-- Scorecard ID: `EVALSCORECARD:96183086252CA24DEC03AFE069AF1F47`
-- Scorecard hash: `2647bd4f9032fddb19bfb003a4b2b62978ed34d8bd1ff42d5a76a0b903621405`
+- Scorecard ID: `EVALSCORECARD:EA271BF38D429ADA73A3E05D8D5E9745`
+- Scorecard hash: `4ea685336ae6d1f9295297f2a60c3690eb90e36d6f02f055e955af5067c02ecb`
+- Benchmark report ID: `BASELINEREPORT:18EF624A3A7D704A5C3145CF03A66B93`
+- Benchmark report hash: `5714e86121d6ce8b8d4b13433057465bc57b5c16c85e3209e894260826f9a555`
 - Benchmark: cash/no-trade report with exact split/instrument/venue/feature_ts row alignment.
 
 | baseline | split | n | net return | Sharpe | max DD | CVaR | turnover | avg exposure | costs | rel. cash |

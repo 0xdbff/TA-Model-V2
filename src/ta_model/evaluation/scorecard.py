@@ -40,6 +40,7 @@ def build_evaluation_scorecard(
     assumptions = assumptions or MetricAssumptions()
     benchmark_config = BenchmarkConfig(
         benchmark_report_id=benchmark_report.baseline_report_id,
+        benchmark_report_hash=benchmark_report.baseline_report_hash,
         benchmark_name=benchmark_report.baseline_config.name,
     )
     scores: list[BaselineSplitScore] = []
