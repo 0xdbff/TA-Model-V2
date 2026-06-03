@@ -61,7 +61,13 @@ def _provenance(raw_payload_id: str) -> HistoricalProvenance:
     )
 
 
-def _bar(index: int, close: Decimal, *, ingest_offset: int = 0) -> OHLCTVBar:
+def _bar(
+    index: int,
+    close: Decimal,
+    *,
+    ingest_offset: int = 0,
+    source_offset: int = 0,
+) -> OHLCTVBar:
     open_ts = START + timedelta(minutes=index)
     close_ts = open_ts + timedelta(minutes=1)
     return OHLCTVBar(
@@ -78,7 +84,7 @@ def _bar(index: int, close: Decimal, *, ingest_offset: int = 0) -> OHLCTVBar:
         quote_volume=(Decimal("10") + Decimal(index)) * close,
         trade_count=10 + index,
         vwap=close,
-        source_ts=close_ts,
+        source_ts=close_ts + timedelta(seconds=source_offset),
         ingest_ts=NOW + timedelta(seconds=ingest_offset),
         quality_flags=(QualityFlag.LATE,),
         raw_payload_id=f"RAW:S4-002:BAR:{index}",
@@ -110,6 +116,16 @@ def _batch(closes: tuple[str, ...], *, ingest_offset: int = 0) -> SilverNormaliz
     normalized_bars = tuple(bar.model_copy(update={"raw_payload_id": raw_id}) for bar in bars)
     return normalize_historical_page(
         _page(normalized_bars, raw_id),
+        venue_id=VENUE_ID,
+        instrument_id=INSTRUMENT_ID,
+    )
+
+
+def _batch_with_late_source_bar() -> SilverNormalizationBatch:
+    bar = _bar(0, Decimal("100"), source_offset=1)
+    raw_id = bar.raw_payload_id
+    return normalize_historical_page(
+        _page((bar,), raw_id),
         venue_id=VENUE_ID,
         instrument_id=INSTRUMENT_ID,
     )
@@ -337,6 +353,15 @@ def test_fee_overlap_and_bad_ohlctv_event_time_fail_closed() -> None:
     with pytest.raises(LiquidityCostFeatureEngineError, match="at least one OHLCTV"):
         build_liquidity_cost_feature_vectors(
             empty_batch,
+            quotes=(_quote(0, "99", "101"),),
+            fee_schedules=(_fee(START),),
+        )
+
+
+def test_late_source_bar_fails_closed_before_feature_emission() -> None:
+    with pytest.raises(LiquidityCostFeatureEngineError, match="source_ts"):
+        build_liquidity_cost_feature_vectors(
+            _batch_with_late_source_bar(),
             quotes=(_quote(0, "99", "101"),),
             fee_schedules=(_fee(START),),
         )

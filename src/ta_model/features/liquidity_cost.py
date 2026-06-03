@@ -152,6 +152,10 @@ def _validate_ohlctv_batch(batch: SilverNormalizationBatch) -> tuple[SilverOHLCT
     for record in records:
         if record.timeframe != batch.timeframe:
             raise LiquidityCostFeatureEngineError("record timeframe must match batch timeframe")
+        if record.bar.source_ts > record.bar.close_ts:
+            raise LiquidityCostFeatureEngineError(
+                "OHLCTV source_ts must be available at or before close_ts"
+            )
         if previous_close_ts is not None and record.bar.close_ts <= previous_close_ts:
             raise LiquidityCostFeatureEngineError("OHLCTV close_ts must be strictly increasing")
         previous_close_ts = record.bar.close_ts

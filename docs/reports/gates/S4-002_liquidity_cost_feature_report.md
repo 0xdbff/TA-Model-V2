@@ -11,8 +11,8 @@ Date: 2026-06-03
 
 - Added fixture-only `QuoteFeatureInput` with deterministic ID derived from event-time quote fields, excluding `ingest_ts`.
 - Added pure-Python `liquidity_cost` feature builder producing `FeatureVector`s with spread, half-spread, mid-price, bid/ask size, top-of-book base/quote liquidity, volume, trade count, realized volatility, maker/taker fee, taker-fee bps, one-way/round-trip taker cost bps, and minimum-fee features.
-- Feature builder uses only bars with `close_ts <= feature_ts`, latest quote with `event_ts <= feature_ts` and `source_ts <= feature_ts` when present, and fee schedule active under `effective_from <= feature_ts < effective_to`.
-- Missing quote/fee coverage, crossed/locked quotes, duplicate/non-monotonic quote event times, source-time unavailable quotes, and duplicate/non-monotonic bar close times fail closed.
+- Feature builder uses close-time bars only when `source_ts <= close_ts`, latest quote with `event_ts <= feature_ts` and `source_ts <= feature_ts` when present, and fee schedule active under `effective_from <= feature_ts < effective_to`.
+- Missing quote/fee coverage, crossed/locked quotes, duplicate/non-monotonic quote event times, source-time unavailable quotes, late-source bars, and duplicate/non-monotonic bar close times fail closed.
 
 ## Validation command
 
@@ -25,7 +25,7 @@ Result:
 ```text
 All checks passed!
 Success: no issues found in 30 source files
-109 passed in 0.68s
+110 passed in 0.56s
 ```
 
 ## Runtime / Docker impact
