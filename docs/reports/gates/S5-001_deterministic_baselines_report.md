@@ -8,6 +8,7 @@ Requirements: FR-007, FR-014, NFR-001, NFR-005
 
 - Added deterministic baseline contracts for reusable config, row output, split summaries, and baseline reports.
 - Implemented fixture/local cash/no-trade, buy-and-hold, and equal-weight basket baselines over `DatasetSnapshot.rows`.
+- Reset default position/turnover state at each configured split/window boundary for per-window baseline reports.
 - Preserved dataset/config lineage via `dataset_snapshot_id`, `dataset_hash`, `baseline_config_id`, `baseline_config_hash`, report hash, and row IDs.
 - Exposed per-row target weight, exposure, realized return, turnover, cost rate/return, net return, and no-trade reason for S5-003 scorecard integration.
 
@@ -16,10 +17,28 @@ Requirements: FR-007, FR-014, NFR-001, NFR-005
 - Cash/no-trade baseline emits explicit zero target weight, exposure, turnover, costs, and net return with `cash_no_trade_baseline` reason.
 - Buy-and-hold uses deterministic event-time rows and applies entry turnover/cost from point-in-time cost features when present.
 - Equal-weight basket allocates deterministically across multiple instruments sharing a split/window timestamp.
+- Buy-and-hold and equal-weight basket first rows in validation/test incur independent split entry turnover/cost instead of carrying train positions forward.
+- Rows must be chronological by `feature_ts`; non-chronological rows fail closed before turnover is computed.
 - Future-value labels are converted to realized returns using the row `close` feature available at `feature_ts`; future-return labels are consumed directly as outcomes.
 - Missing cost features default to zero and are documented as proxy assumptions, not S6 slippage/TCA evidence.
 - Deterministic config/report/row IDs and hashes are tested.
 - Bad inputs fail closed for empty snapshots, non-positive close values, and negative cost features.
+
+## Deterministic baseline example across configured windows
+
+Fixture assumptions used by regression tests: chronological windows are train `[00:00, 00:02)`, validation `[00:02, 00:04)`, and test `[00:04, 00:06)`; `close` values are 100 through 105; future-value labels are `close + 1`; `round_trip_taker_cost_bps=10` (0.001 return-rate entry cost). Buy-and-hold uses one instrument. Equal-weight uses two instruments with identical fixture returns, 0.5 target weight per instrument, and split-local turnover reset.
+
+| Baseline | Split/window | Rows | Gross return sum | Turnover sum | Cost return sum | Net return sum | Avg exposure |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Cash/no-trade | train | 2 | 0 | 0 | 0 | 0 | 0 |
+| Cash/no-trade | validation | 2 | 0 | 0 | 0 | 0 | 0 |
+| Cash/no-trade | test | 2 | 0 | 0 | 0 | 0 | 0 |
+| Buy-and-hold | train | 2 | 0.019900990099 | 1 | 0.001 | 0.018900990099 | 1 |
+| Buy-and-hold | validation | 2 | 0.019512659433 | 1 | 0.001 | 0.018512659433 | 1 |
+| Buy-and-hold | test | 2 | 0.019139194139 | 1 | 0.001 | 0.018139194139 | 1 |
+| Equal-weight basket | train | 4 | 0.019900990099 | 1.0 | 0.0010 | 0.018900990099 | 0.5 |
+| Equal-weight basket | validation | 4 | 0.019512659433 | 1.0 | 0.0010 | 0.018512659433 | 0.5 |
+| Equal-weight basket | test | 4 | 0.019139194139 | 1.0 | 0.0010 | 0.018139194139 | 0.5 |
 
 ## Validation commands
 
@@ -27,7 +46,7 @@ Executed locally in this PR branch:
 
 1. `uv run ruff check .` — passed (`All checks passed!`)
 2. `uv run mypy src tests` — passed (`Success: no issues found in 39 source files`)
-3. `uv run pytest` — passed (`135 passed in 0.62s`)
+3. `uv run pytest` — passed (`137 passed in 0.66s`)
 
 ## Docker/runtime impact
 

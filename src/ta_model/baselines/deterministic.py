@@ -31,6 +31,7 @@ def run_baseline(snapshot: DatasetSnapshot, config: BaselineConfig) -> BaselineR
 
     if not snapshot.rows:
         raise BaselineBuildError("at least one dataset row is required")
+    _validate_row_order(snapshot.rows)
     if config.kind is BaselineKind.CASH:
         rows = tuple(_cash_row(row) for row in snapshot.rows)
     elif config.kind is BaselineKind.BUY_AND_HOLD:
@@ -41,7 +42,7 @@ def run_baseline(snapshot: DatasetSnapshot, config: BaselineConfig) -> BaselineR
                 target_weight=Decimal("1"),
                 previous_weight=(
                     Decimal("0")
-                    if _is_first_instrument_row(snapshot.rows, row)
+                    if _is_first_instrument_split_row(snapshot.rows, row)
                     else Decimal("1")
                 ),
                 config=config,
@@ -102,12 +103,13 @@ def _equal_weight_rows(
     for row in snapshot.rows:
         rows_by_split_ts[(row.split, row.feature_ts.isoformat())].append(row)
 
-    previous_weights: dict[str, Decimal] = {}
+    previous_weights: dict[tuple[DatasetSplit, str], Decimal] = {}
     output: list[BaselineRow] = []
     for row in snapshot.rows:
         peers = rows_by_split_ts[(row.split, row.feature_ts.isoformat())]
         target_weight = Decimal("1") / Decimal(len(peers))
-        previous_weight = previous_weights.get(row.instrument_id, Decimal("0"))
+        previous_key = (row.split, row.instrument_id)
+        previous_weight = previous_weights.get(previous_key, Decimal("0"))
         output.append(
             _invested_row(
                 row=row,
@@ -118,7 +120,7 @@ def _equal_weight_rows(
                 label_method=snapshot.label_rule.method,
             )
         )
-        previous_weights[row.instrument_id] = target_weight
+        previous_weights[previous_key] = target_weight
     return tuple(output)
 
 
@@ -216,11 +218,21 @@ def _cost_rate(*, row: DatasetRow, config: BaselineConfig) -> Decimal:
     return Decimal("0")
 
 
-def _is_first_instrument_row(rows: tuple[DatasetRow, ...], candidate: DatasetRow) -> bool:
+def _is_first_instrument_split_row(
+    rows: tuple[DatasetRow, ...], candidate: DatasetRow
+) -> bool:
     for row in rows:
-        if row.instrument_id == candidate.instrument_id:
+        if row.split is candidate.split and row.instrument_id == candidate.instrument_id:
             return row.row_id == candidate.row_id
     raise BaselineBuildError("candidate row not present in snapshot")
+
+
+def _validate_row_order(rows: tuple[DatasetRow, ...]) -> None:
+    previous_row: DatasetRow | None = None
+    for row in rows:
+        if previous_row is not None and row.feature_ts < previous_row.feature_ts:
+            raise BaselineBuildError("dataset rows must be chronological by feature_ts")
+        previous_row = row
 
 
 def _summaries(rows: tuple[BaselineRow, ...]) -> tuple[BaselineSplitSummary, ...]:

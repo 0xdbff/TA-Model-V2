@@ -143,6 +143,125 @@ def _build_snapshot(*, rows: tuple[DatasetRow, ...], label_rule: LabelRule) -> D
     )
 
 
+def _windowed_snapshot(
+    *,
+    instruments: tuple[str, ...] = ("FIXTURE_SPOT:BTC-USD",),
+    extra_values: dict[str, FeatureValue] | None = None,
+) -> DatasetSnapshot:
+    label_rule = build_label_rule(
+        name="future_1m", horizon_seconds=60, method=LabelMethod.FUTURE_VALUE
+    )
+    rows: list[DatasetRow] = []
+    split_by_index = {
+        0: DatasetSplit.TRAIN,
+        1: DatasetSplit.TRAIN,
+        2: DatasetSplit.VALIDATION,
+        3: DatasetSplit.VALIDATION,
+        4: DatasetSplit.TEST,
+        5: DatasetSplit.TEST,
+    }
+    for index in range(6):
+        feature_ts = START + timedelta(minutes=index)
+        close = Decimal("100") + Decimal(index)
+        label_value = close + Decimal("1")
+        for instrument_id in instruments:
+            values: dict[str, FeatureValue] = {"close": close}
+            if extra_values is not None:
+                values.update(extra_values)
+            input_snapshot_id = f"FEATUREINPUT:S5-001:WINDOW:{instrument_id}:{index}"
+            feature_vector_id = build_feature_vector_id(
+                instrument_id=instrument_id,
+                venue_id=VENUE_ID,
+                feature_ts=feature_ts,
+                feature_version=FEATURE_VERSION,
+                lookback_window="fixture-6-bars",
+                values=values,
+                input_snapshot_id=input_snapshot_id,
+                quality_flags=(),
+            )
+            label_ts = feature_ts + timedelta(minutes=1)
+            label_observation_id = f"LABELOBS:S5-001:WINDOW:{instrument_id}:{index}"
+            split = split_by_index[index]
+            row_id = build_dataset_row_id(
+                feature_vector_id=feature_vector_id,
+                instrument_id=instrument_id,
+                venue_id=VENUE_ID,
+                feature_ts=feature_ts,
+                feature_version=FEATURE_VERSION,
+                feature_values=values,
+                feature_input_snapshot_id=input_snapshot_id,
+                split=split,
+                label_rule_id=label_rule.label_rule_id,
+                label_value=label_value,
+                label_ts=label_ts,
+                label_observation_id=label_observation_id,
+                source_feature_snapshot_ids=(SOURCE_FEATURE_SNAPSHOT_ID,),
+            )
+            rows.append(
+                DatasetRow(
+                    row_id=row_id,
+                    feature_vector_id=feature_vector_id,
+                    instrument_id=instrument_id,
+                    venue_id=VENUE_ID,
+                    feature_ts=feature_ts,
+                    feature_version=FEATURE_VERSION,
+                    feature_values=values,
+                    feature_input_snapshot_id=input_snapshot_id,
+                    split=split,
+                    label_rule_id=label_rule.label_rule_id,
+                    label_value=label_value,
+                    label_ts=label_ts,
+                    label_observation_id=label_observation_id,
+                    source_feature_snapshot_ids=(SOURCE_FEATURE_SNAPSHOT_ID,),
+                )
+            )
+    return _build_windowed_snapshot(rows=tuple(rows), label_rule=label_rule)
+
+
+def _build_windowed_snapshot(
+    *, rows: tuple[DatasetRow, ...], label_rule: LabelRule
+) -> DatasetSnapshot:
+    split_windows = (
+        ChronologicalSplitWindow(
+            split=DatasetSplit.TRAIN,
+            start_ts=START,
+            end_ts=START + timedelta(minutes=2),
+        ),
+        ChronologicalSplitWindow(
+            split=DatasetSplit.VALIDATION,
+            start_ts=START + timedelta(minutes=2),
+            end_ts=START + timedelta(minutes=4),
+        ),
+        ChronologicalSplitWindow(
+            split=DatasetSplit.TEST,
+            start_ts=START + timedelta(minutes=4),
+            end_ts=START + timedelta(minutes=6),
+        ),
+    )
+    dataset_hash = build_dataset_hash(
+        rows=rows,
+        split_windows=split_windows,
+        label_rule=label_rule,
+        source_feature_snapshot_ids=(SOURCE_FEATURE_SNAPSHOT_ID,),
+    )
+    return DatasetSnapshot(
+        dataset_snapshot_id=build_dataset_snapshot_id(dataset_hash=dataset_hash),
+        dataset_hash=dataset_hash,
+        feature_versions=(FEATURE_VERSION,),
+        feature_vector_ids=tuple(row.feature_vector_id for row in rows),
+        source_feature_snapshot_ids=(SOURCE_FEATURE_SNAPSHOT_ID,),
+        split_windows=split_windows,
+        label_rule=label_rule,
+        row_ids=tuple(row.row_id for row in rows),
+        row_counts_by_split={
+            DatasetSplit.TRAIN: sum(row.split is DatasetSplit.TRAIN for row in rows),
+            DatasetSplit.VALIDATION: sum(row.split is DatasetSplit.VALIDATION for row in rows),
+            DatasetSplit.TEST: sum(row.split is DatasetSplit.TEST for row in rows),
+        },
+        rows=rows,
+    )
+
+
 def test_cash_no_trade_baseline_is_explicit_zero_exposure_turnover_and_cost() -> None:
     report = run_baseline(
         _snapshot(), build_baseline_config(name="cash", kind=BaselineKind.CASH)
@@ -167,7 +286,33 @@ def test_buy_and_hold_uses_event_time_rows_and_point_in_time_cost_feature() -> N
     assert report.rows[0].cost_rate == Decimal("0.001")
     assert report.rows[0].realized_return == Decimal("0.01")
     assert report.rows[0].net_return == Decimal("0.009")
-    assert report.rows[1].turnover == Decimal("0")
+    assert report.rows[1].turnover == Decimal("1")
+
+
+def test_buy_and_hold_resets_entry_turnover_and_cost_at_each_split() -> None:
+    report = run_baseline(
+        _windowed_snapshot(extra_values={"round_trip_taker_cost_bps": Decimal("10")}),
+        build_baseline_config(name="buy-hold", kind=BaselineKind.BUY_AND_HOLD),
+    )
+
+    first_by_split = {
+        DatasetSplit.TRAIN: START,
+        DatasetSplit.VALIDATION: START + timedelta(minutes=2),
+        DatasetSplit.TEST: START + timedelta(minutes=4),
+    }
+    for split, feature_ts in first_by_split.items():
+        first_row = next(
+            row for row in report.rows if row.split is split and row.feature_ts == feature_ts
+        )
+        second_row = next(
+            row
+            for row in report.rows
+            if row.split is split and row.feature_ts == feature_ts + timedelta(minutes=1)
+        )
+        assert first_row.turnover == Decimal("1")
+        assert first_row.cost_return == Decimal("0.001")
+        assert second_row.turnover == Decimal("0")
+        assert second_row.cost_return == Decimal("0")
 
 
 def test_missing_cost_features_default_to_zero_without_claiming_tca() -> None:
@@ -192,6 +337,37 @@ def test_equal_weight_basket_allocates_deterministically_across_instruments() ->
     ]
     assert {row.target_weight for row in train_rows} == {Decimal("0.5")}
     assert sum((row.exposure for row in train_rows), Decimal("0")) == Decimal("1.0")
+
+
+def test_equal_weight_basket_resets_turnover_per_instrument_at_each_split() -> None:
+    report = run_baseline(
+        _windowed_snapshot(
+            instruments=("FIXTURE_SPOT:BTC-USD", "FIXTURE_SPOT:ETH-USD"),
+            extra_values={"round_trip_taker_cost_bps": Decimal("10")},
+        ),
+        build_baseline_config(name="equal-weight", kind=BaselineKind.EQUAL_WEIGHT_BASKET),
+    )
+
+    first_timestamps = {
+        DatasetSplit.TRAIN: START,
+        DatasetSplit.VALIDATION: START + timedelta(minutes=2),
+        DatasetSplit.TEST: START + timedelta(minutes=4),
+    }
+    for split, first_ts in first_timestamps.items():
+        entry_rows = tuple(
+            row for row in report.rows if row.split is split and row.feature_ts == first_ts
+        )
+        next_rows = tuple(
+            row
+            for row in report.rows
+            if row.split is split and row.feature_ts == first_ts + timedelta(minutes=1)
+        )
+        assert len(entry_rows) == 2
+        assert {row.turnover for row in entry_rows} == {Decimal("0.5")}
+        assert {row.cost_return for row in entry_rows} == {Decimal("0.0005")}
+        assert len(next_rows) == 2
+        assert {row.turnover for row in next_rows} == {Decimal("0")}
+        assert {row.cost_return for row in next_rows} == {Decimal("0")}
 
 
 def test_future_return_labels_do_not_require_close_and_are_not_repriced() -> None:
@@ -267,3 +443,13 @@ def test_bad_inputs_fail_closed() -> None:
     )
     with pytest.raises(BaselineBuildError, match="at least one dataset row"):
         run_baseline(empty_snapshot, build_baseline_config(name="cash", kind=BaselineKind.CASH))
+
+    ordered_snapshot = _windowed_snapshot()
+    non_chronological_snapshot = _build_windowed_snapshot(
+        rows=tuple(reversed(ordered_snapshot.rows)), label_rule=ordered_snapshot.label_rule
+    )
+    with pytest.raises(BaselineBuildError, match="chronological by feature_ts"):
+        run_baseline(
+            non_chronological_snapshot,
+            build_baseline_config(name="buy-hold", kind=BaselineKind.BUY_AND_HOLD),
+        )
