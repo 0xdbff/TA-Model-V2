@@ -1,8 +1,9 @@
-"""Cash, buy-and-hold, and equal-weight basket baselines over DatasetSnapshot rows."""
+"""Deterministic S5 baselines over DatasetSnapshot rows."""
 
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from decimal import Decimal
 
 from ta_model.contracts.baselines import (
@@ -32,6 +33,7 @@ def run_baseline(snapshot: DatasetSnapshot, config: BaselineConfig) -> BaselineR
     if not snapshot.rows:
         raise BaselineBuildError("at least one dataset row is required")
     _validate_row_order(snapshot.rows)
+    lineage_note = "No learned parameters."
     if config.kind is BaselineKind.CASH:
         rows = tuple(_cash_row(row) for row in snapshot.rows)
     elif config.kind is BaselineKind.BUY_AND_HOLD:
@@ -52,6 +54,20 @@ def run_baseline(snapshot: DatasetSnapshot, config: BaselineConfig) -> BaselineR
         )
     elif config.kind is BaselineKind.EQUAL_WEIGHT_BASKET:
         rows = _equal_weight_rows(snapshot=snapshot, config=config)
+    elif config.kind is BaselineKind.TA_HEURISTIC:
+        rows = _signal_rows(snapshot=snapshot, config=config, policy=_ta_signal)
+    elif config.kind is BaselineKind.SIMPLE_ML:
+        model = _fit_simple_ml(snapshot=snapshot)
+        lineage_note = (
+            "Simple ML fit uses train split only; "
+            f"feature={model.feature_name}, threshold={model.threshold}, "
+            f"train_label_mean={model.positive_label_mean}."
+        )
+        rows = _signal_rows(
+            snapshot=snapshot,
+            config=config,
+            policy=lambda row: _simple_ml_signal(row=row, model=model),
+        )
     else:  # pragma: no cover - exhaustive for StrEnum members, retained for fail-closed safety.
         raise BaselineBuildError(f"unsupported baseline kind: {config.kind}")
 
@@ -60,7 +76,8 @@ def run_baseline(snapshot: DatasetSnapshot, config: BaselineConfig) -> BaselineR
         "Uses point-in-time cost feature preference "
         f"{config.cost_feature_preference}; missing cost features default to zero. "
         "round_trip_taker_cost_bps is converted from bps to return units; taker_fee_rate "
-        "is used as a return-rate proxy. No S6 slippage/TCA claim is made."
+        "is used as a return-rate proxy. No S6 slippage/TCA claim is made. "
+        f"Config parameters: {config.parameters}. {lineage_note}"
     )
     report_hash = build_baseline_report_hash(
         dataset_snapshot_id=snapshot.dataset_snapshot_id,
@@ -124,6 +141,36 @@ def _equal_weight_rows(
     return tuple(output)
 
 
+def _signal_rows(
+    *,
+    snapshot: DatasetSnapshot,
+    config: BaselineConfig,
+    policy: SignalPolicy,
+) -> tuple[BaselineRow, ...]:
+    previous_weights: dict[tuple[DatasetSplit, str], Decimal] = {}
+    output: list[BaselineRow] = []
+    for row in snapshot.rows:
+        signal = policy(row)
+        target_weight = Decimal("1") if signal.trade else Decimal("0")
+        previous_key = (row.split, row.instrument_id)
+        previous_weight = previous_weights.get(previous_key, Decimal("0"))
+        if target_weight < 0 or target_weight > 1:
+            raise BaselineBuildError("target weight must be long-only in [0, 1]")
+        output.append(
+            _invested_row(
+                row=row,
+                kind=config.kind,
+                target_weight=target_weight,
+                previous_weight=previous_weight,
+                config=config,
+                label_method=snapshot.label_rule.method,
+                no_trade_reason=signal.no_trade_reason,
+            )
+        )
+        previous_weights[previous_key] = target_weight
+    return tuple(output)
+
+
 def _invested_row(
     *,
     row: DatasetRow,
@@ -132,6 +179,7 @@ def _invested_row(
     previous_weight: Decimal,
     config: BaselineConfig,
     label_method: LabelMethod,
+    no_trade_reason: str | None = None,
 ) -> BaselineRow:
     turnover = abs(target_weight - previous_weight)
     cost_rate = _cost_rate(row=row, config=config)
@@ -142,8 +190,93 @@ def _invested_row(
         realized_return=_realized_return(row=row, label_method=label_method),
         turnover=turnover,
         cost_rate=cost_rate,
-        no_trade_reason=None,
+        no_trade_reason=no_trade_reason,
     )
+
+
+class Signal:
+    """Long-only point-in-time signal decision."""
+
+    def __init__(self, *, trade: bool, no_trade_reason: str | None) -> None:
+        self.trade = trade
+        self.no_trade_reason = no_trade_reason
+
+
+type SignalPolicy = Callable[[DatasetRow], Signal]
+
+
+def _ta_signal(row: DatasetRow) -> Signal:
+    signal_feature = _first_numeric_feature(row, ("momentum_3", "one_bar_return"))
+    if signal_feature is None:
+        return Signal(trade=False, no_trade_reason="ta_missing_signal_feature")
+    _, value = signal_feature
+    if value <= 0:
+        return Signal(trade=False, no_trade_reason="ta_non_positive_signal")
+    return Signal(trade=True, no_trade_reason=None)
+
+
+class SimpleMLModel:
+    """Pure-Python train-split threshold model lineage."""
+
+    def __init__(
+        self, *, feature_name: str, threshold: Decimal, positive_label_mean: Decimal
+    ) -> None:
+        self.feature_name = feature_name
+        self.threshold = threshold
+        self.positive_label_mean = positive_label_mean
+
+
+def _fit_simple_ml(*, snapshot: DatasetSnapshot) -> SimpleMLModel:
+    train_rows = tuple(row for row in snapshot.rows if row.split is DatasetSplit.TRAIN)
+    if not train_rows:
+        raise BaselineBuildError("simple ML baseline requires train split rows")
+    feature_name = "one_bar_return"
+    train_features = tuple(_numeric_feature(row, feature_name) for row in train_rows)
+    usable_rows = tuple(
+        (row, value)
+        for row, value in zip(train_rows, train_features, strict=True)
+        if value is not None
+    )
+    if not usable_rows:
+        raise BaselineBuildError("simple ML baseline requires train split numeric features")
+    threshold = sum((value for _, value in usable_rows), Decimal("0")) / Decimal(len(usable_rows))
+    train_returns = tuple(
+        _realized_return(row=row, label_method=snapshot.label_rule.method) for row, _ in usable_rows
+    )
+    positive_label_mean = sum(train_returns, Decimal("0")) / Decimal(len(train_returns))
+    return SimpleMLModel(
+        feature_name=feature_name,
+        threshold=threshold,
+        positive_label_mean=positive_label_mean,
+    )
+
+
+def _simple_ml_signal(*, row: DatasetRow, model: SimpleMLModel) -> Signal:
+    value = _numeric_feature(row, model.feature_name)
+    if value is None:
+        return Signal(trade=False, no_trade_reason="ml_missing_signal_feature")
+    if model.positive_label_mean <= 0:
+        return Signal(trade=False, no_trade_reason="ml_train_mean_not_positive")
+    if value <= model.threshold:
+        return Signal(trade=False, no_trade_reason="ml_below_train_threshold")
+    return Signal(trade=True, no_trade_reason=None)
+
+
+def _first_numeric_feature(
+    row: DatasetRow, feature_names: tuple[str, ...]
+) -> tuple[str, Decimal] | None:
+    for feature_name in feature_names:
+        value = _numeric_feature(row, feature_name)
+        if value is not None:
+            return feature_name, value
+    return None
+
+
+def _numeric_feature(row: DatasetRow, feature_name: str) -> Decimal | None:
+    value = row.feature_values.get(feature_name)
+    if value is None:
+        return None
+    return value
 
 
 def _build_row(
