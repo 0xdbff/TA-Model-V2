@@ -23,8 +23,8 @@
 
 ## Deterministic scorecard evidence
 
-- Scorecard ID: `EVALSCORECARD:EA271BF38D429ADA73A3E05D8D5E9745`
-- Scorecard hash: `4ea685336ae6d1f9295297f2a60c3690eb90e36d6f02f055e955af5067c02ecb`
+- Scorecard ID: `EVALSCORECARD:9F641495BBD6C5403B7346B0037DAA4B`
+- Scorecard hash: `7f524de6f8dfd99a3695d835f5d0724efa8742c35972aea43545007a7a23031a`
 - Benchmark report ID: `BASELINEREPORT:18EF624A3A7D704A5C3145CF03A66B93`
 - Benchmark report hash: `5714e86121d6ce8b8d4b13433057465bc57b5c16c85e3209e894260826f9a555`
 - Benchmark: cash/no-trade report with exact split/instrument/venue/feature_ts row alignment.
@@ -53,11 +53,12 @@ Sortino is `not_applicable` for the fixture rows above because there are no down
 
 - `uv run ruff check .` — passed.
 - `uv run mypy src tests` — passed.
-- `uv run pytest` — 148 passed.
+- `uv run pytest` — 156 passed after S5-004 stable baseline-kind evidence refresh.
 
 ## Acceptance evidence
 
 - Scorecard contracts and builder consume `BaselineReport`/`BaselineRow` directly.
+- Scores carry stable `BaselineKind` in addition to display names for S5-004 gate checks.
 - Metrics include net return, mean net return, Sharpe, Sortino, Calmar, max drawdown, CVaR, turnover, average exposure, costs, and benchmark-relative net return.
 - Tests cover cash/no-trade flat windows, all-positive undefined Sortino, no-drawdown undefined Calmar, loss windows, empty/missing baseline inputs, benchmark alignment mismatch, deterministic IDs/hashes, and propagation of costs/turnover/exposure.
 

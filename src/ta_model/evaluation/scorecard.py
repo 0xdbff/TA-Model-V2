@@ -96,6 +96,7 @@ def _score_split(
     return BaselineSplitScore(
         baseline_report_id=report.baseline_report_id,
         baseline_name=report.baseline_config.name,
+        baseline_kind=report.baseline_config.kind,
         split=split,
         observation_count=len(rows),
         net_return=_metric(_compounded_return(returns), reason=reason),

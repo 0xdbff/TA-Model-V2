@@ -20,6 +20,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
+from ta_model.contracts.baselines import BaselineKind
 from ta_model.contracts.datasets import DatasetSplit
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
 
@@ -95,6 +96,7 @@ class BaselineSplitScore(ContractModel):
 
     baseline_report_id: CanonicalId
     baseline_name: NonEmptyString
+    baseline_kind: BaselineKind
     split: DatasetSplit
     observation_count: int = Field(ge=0)
     net_return: EvaluationMetric

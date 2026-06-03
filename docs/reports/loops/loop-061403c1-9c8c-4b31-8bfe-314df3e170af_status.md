@@ -41,7 +41,7 @@ not sufficient evidence; no-trade/cash must be a first-class logged baseline.
 | #23 | S5-001 | PR #85 merged to loop | Cash/no-trade, buy-and-hold, and equal-weight basket baselines added with split-local turnover reset semantics, deterministic lineage, proxy-cost assumptions, and concrete per-window report evidence. |
 | #24 | S5-002 | PR #86 merged to loop | TA heuristic and pure-Python simple ML baselines added through shared baseline contracts with no-trade rows, train-only ML fitting, proxy-cost assumptions, and comparator report evidence. |
 | #25 | S5-003 | PR #87 merged to loop | Evaluation scorecard added with net return, Sharpe, Sortino, Calmar, max drawdown, CVaR, turnover, exposure, costs, benchmark-relative metrics, explicit undefined states, and benchmark hash lineage. |
-| #26 | S5-004 | PR pending | Baseline gate decision added with PASS result, caveats, and blocker tests for missing baseline/evidence/benchmark-relative metrics. |
+| #26 | S5-004 | PR pending | Baseline gate decision added with PASS result, stable baseline-kind checks, scorecard-evidence matching, caveats, and blocker tests for missing baseline/evidence/benchmark-relative metrics. |
 
 ## Dependencies and sequencing
 
@@ -130,8 +130,8 @@ Additional focused checks expected:
   passed; `uv run mypy src tests` passed; `uv run pytest` passed with 148 tests.
 - Loop validation after #25 merge: `uv run ruff check .` passed; `uv run mypy src tests`
   passed; `uv run pytest` passed with 148 tests.
-- #26 pre-PR validation in sub-agent worktree: `uv run ruff check .` passed;
-  `uv run mypy src tests` passed; `uv run pytest` passed with 153 tests.
+- #26 pre-PR validation in sub-agent worktree after QA fixes: `uv run ruff check .` passed;
+  `uv run mypy src tests` passed; `uv run pytest` passed with 156 tests.
 
 ## Human-sync decisions
 

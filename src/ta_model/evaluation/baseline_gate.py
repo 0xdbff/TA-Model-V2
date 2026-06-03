@@ -10,6 +10,8 @@ Scope: local validation only; no live/paper services, orders, capital, or promot
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ta_model.contracts.baselines import BaselineKind
 from ta_model.contracts.evaluation import (
     BaselineGateDecision,
@@ -57,9 +59,11 @@ def validate_s5_baseline_gate(
     """Validate complete S5 baseline evidence for future fixed-comparator use."""
 
     blockers: list[str] = []
-    _check_required_evidence(evidence_paths=evidence_paths, blockers=blockers)
-    scores_by_name = _scores_by_name(scorecard.scores)
-    _check_required_baselines(scores_by_name=scores_by_name, blockers=blockers)
+    _check_required_evidence(
+        scorecard=scorecard, evidence_paths=evidence_paths, blockers=blockers
+    )
+    scores_by_kind = _scores_by_kind(scorecard.scores)
+    _check_required_baselines(scores_by_kind=scores_by_kind, blockers=blockers)
     _check_required_metrics(scores=scorecard.scores, blockers=blockers)
     status = BaselineGateStatus.PASS if not blockers else BaselineGateStatus.BLOCKED
     return BaselineGateDecision(
@@ -74,26 +78,43 @@ def validate_s5_baseline_gate(
     )
 
 
-def _check_required_evidence(*, evidence_paths: tuple[str, ...], blockers: list[str]) -> None:
+def _check_required_evidence(
+    *, scorecard: EvaluationScorecard, evidence_paths: tuple[str, ...], blockers: list[str]
+) -> None:
+    existing_content_by_path: dict[str, str] = {}
+    for evidence_path in evidence_paths:
+        path = Path(evidence_path)
+        if not path.is_file():
+            blockers.append(f"evidence path does not exist: {evidence_path}")
+            continue
+        existing_content_by_path[evidence_path] = path.read_text(encoding="utf-8")
+
     for marker in REQUIRED_EVIDENCE_MARKERS:
-        if not any(marker in path for path in evidence_paths):
+        if not any(marker in path for path in existing_content_by_path):
             blockers.append(f"missing required evidence report {marker}")
+    s5_003_contents = tuple(
+        content for path, content in existing_content_by_path.items() if "S5-003" in path
+    )
+    if not any(scorecard.scorecard_id in content for content in s5_003_contents):
+        blockers.append("S5-003 evidence does not match scorecard_id")
+    if not any(scorecard.scorecard_hash in content for content in s5_003_contents):
+        blockers.append("S5-003 evidence does not match scorecard_hash")
 
 
-def _scores_by_name(
+def _scores_by_kind(
     scores: tuple[BaselineSplitScore, ...],
-) -> dict[str, tuple[BaselineSplitScore, ...]]:
-    grouped: dict[str, list[BaselineSplitScore]] = {}
+) -> dict[BaselineKind, tuple[BaselineSplitScore, ...]]:
+    grouped: dict[BaselineKind, list[BaselineSplitScore]] = {}
     for score in scores:
-        grouped.setdefault(score.baseline_name, []).append(score)
-    return {name: tuple(items) for name, items in grouped.items()}
+        grouped.setdefault(score.baseline_kind, []).append(score)
+    return {kind: tuple(items) for kind, items in grouped.items()}
 
 
 def _check_required_baselines(
-    *, scores_by_name: dict[str, tuple[BaselineSplitScore, ...]], blockers: list[str]
+    *, scores_by_kind: dict[BaselineKind, tuple[BaselineSplitScore, ...]], blockers: list[str]
 ) -> None:
     for kind in REQUIRED_BASELINES:
-        if kind.value not in scores_by_name:
+        if kind not in scores_by_kind:
             blockers.append(f"missing required baseline {kind.value}")
 
 
