@@ -49,16 +49,16 @@ Required and present in S5-003 scorecard evidence:
 - Costs
 - Benchmark-relative net return
 
-Undefined Sharpe/Sortino/Calmar cases are explicitly marked `not_applicable` with reasons such as zero volatility, no downside returns, or no drawdown. Missing required baselines, missing evidence, blocked benchmark-relative metrics, empty scored splits, or non-risk metric `not_applicable` statuses are treated as gate blockers by `validate_s5_baseline_gate`.
+Undefined Sharpe/Sortino/Calmar cases are explicitly marked `not_applicable` with reasons such as zero volatility, no downside returns, or no drawdown. Missing required baselines, missing baseline split/window evidence across train/validation/test, duplicate baseline split evidence, missing evidence files, blocked benchmark-relative metrics, empty scored splits, or non-risk metric `not_applicable` statuses are treated as gate blockers by `validate_s5_baseline_gate`.
 
 ## Validation commands
 
 Executed locally in this PR branch:
 
-1. `uv run pytest tests/test_evaluation_scorecard.py` — passed (`16 passed in 0.18s`).
+1. `uv run pytest tests/test_evaluation_scorecard.py` — passed (`17 passed in 0.19s`).
 2. `uv run ruff check .` — passed (`All checks passed!`).
 3. `uv run mypy src tests` — passed (`Success: no issues found in 44 source files`).
-4. `uv run pytest` — passed (`156 passed in 0.76s`).
+4. `uv run pytest` — passed (`157 passed in 0.73s`).
 
 ## Docker/runtime impact
 
@@ -70,6 +70,7 @@ No Docker, Compose, runtime service, datastore, broker, object storage, external
 - No-trade/cash is a required first-class comparator and benchmark.
 - Benchmark-relative net return is required and fails closed on blocked/misaligned evidence.
 - Required baselines are validated by stable `BaselineKind`, not mutable display names.
+- Each required baseline kind must include train, validation, and test split/window evidence.
 - Evidence paths must exist, and S5-003 evidence must match the actual scorecard ID/hash.
 - S5 proxy costs remain labeled pre-S6 and are not represented as simulator-grade slippage/TCA completeness.
 - Simple ML caveat is preserved: train metrics are in-sample; validation/test apply fixed train parameters.

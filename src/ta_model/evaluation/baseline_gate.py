@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ta_model.contracts.baselines import BaselineKind
+from ta_model.contracts.datasets import DatasetSplit
 from ta_model.contracts.evaluation import (
     BaselineGateDecision,
     BaselineGateStatus,
@@ -64,6 +65,7 @@ def validate_s5_baseline_gate(
     )
     scores_by_kind = _scores_by_kind(scorecard.scores)
     _check_required_baselines(scores_by_kind=scores_by_kind, blockers=blockers)
+    _check_required_baseline_splits(scores_by_kind=scores_by_kind, blockers=blockers)
     _check_required_metrics(scores=scorecard.scores, blockers=blockers)
     status = BaselineGateStatus.PASS if not blockers else BaselineGateStatus.BLOCKED
     return BaselineGateDecision(
@@ -116,6 +118,21 @@ def _check_required_baselines(
     for kind in REQUIRED_BASELINES:
         if kind not in scores_by_kind:
             blockers.append(f"missing required baseline {kind.value}")
+
+
+def _check_required_baseline_splits(
+    *, scores_by_kind: dict[BaselineKind, tuple[BaselineSplitScore, ...]], blockers: list[str]
+) -> None:
+    for kind in REQUIRED_BASELINES:
+        scores = scores_by_kind.get(kind, ())
+        split_counts = {split: 0 for split in DatasetSplit}
+        for score in scores:
+            split_counts[score.split] += 1
+        for split, count in split_counts.items():
+            if count == 0:
+                blockers.append(f"missing required baseline split {kind.value}/{split.value}")
+            elif count > 1:
+                blockers.append(f"duplicate baseline split {kind.value}/{split.value}")
 
 
 def _check_required_metrics(

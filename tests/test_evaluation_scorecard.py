@@ -415,6 +415,34 @@ def test_s5_baseline_gate_uses_stable_kind_not_spoofed_display_names(
     assert "missing required baseline simple_ml" in gate.blockers
 
 
+def test_s5_baseline_gate_blocks_train_only_required_baseline_splits(
+    tmp_path: Path,
+) -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    train_only_scorecard = scorecard.model_copy(
+        update={
+            "scores": tuple(
+                score for score in scorecard.scores if score.split is DatasetSplit.TRAIN
+            )
+        }
+    )
+
+    gate = validate_s5_baseline_gate(
+        train_only_scorecard,
+        evidence_paths=_temp_gate_evidence(
+            tmp_path,
+            train_only_scorecard.scorecard_id,
+            train_only_scorecard.scorecard_hash,
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "missing required baseline split cash_no_trade/validation" in gate.blockers
+    assert "missing required baseline split buy_and_hold/test" in gate.blockers
+    assert "missing required baseline split simple_ml/test" in gate.blockers
+
+
 def test_s5_baseline_gate_blocks_missing_evidence_report() -> None:
     reports = tuple(_report(kind) for kind in BaselineKind)
     scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
