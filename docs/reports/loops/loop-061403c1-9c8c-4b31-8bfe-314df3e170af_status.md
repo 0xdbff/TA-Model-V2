@@ -131,7 +131,7 @@ Additional focused checks expected:
 - Loop validation after #25 merge: `uv run ruff check .` passed; `uv run mypy src tests`
   passed; `uv run pytest` passed with 148 tests.
 - #26 pre-PR validation in sub-agent worktree after QA fixes: `uv run ruff check .` passed;
-  `uv run mypy src tests` passed; `uv run pytest` passed with 157 tests.
+  `uv run mypy src tests` passed; `uv run pytest` passed with 158 tests.
 
 ## Human-sync decisions
 

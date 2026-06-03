@@ -55,10 +55,10 @@ Undefined Sharpe/Sortino/Calmar cases are explicitly marked `not_applicable` wit
 
 Executed locally in this PR branch:
 
-1. `uv run pytest tests/test_evaluation_scorecard.py` — passed (`17 passed in 0.19s`).
+1. `uv run pytest tests/test_evaluation_scorecard.py` — passed (`18 passed in 0.20s`).
 2. `uv run ruff check .` — passed (`All checks passed!`).
 3. `uv run mypy src tests` — passed (`Success: no issues found in 44 source files`).
-4. `uv run pytest` — passed (`157 passed in 0.73s`).
+4. `uv run pytest` — passed (`158 passed in 0.79s`).
 
 ## Docker/runtime impact
 

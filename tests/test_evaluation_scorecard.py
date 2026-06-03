@@ -443,6 +443,33 @@ def test_s5_baseline_gate_blocks_train_only_required_baseline_splits(
     assert "missing required baseline split simple_ml/test" in gate.blockers
 
 
+def test_s5_baseline_gate_blocks_duplicate_required_baseline_split(
+    tmp_path: Path,
+) -> None:
+    reports = tuple(_report(kind) for kind in BaselineKind)
+    scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
+    cash_train = next(
+        score
+        for score in scorecard.scores
+        if score.baseline_kind is BaselineKind.CASH and score.split is DatasetSplit.TRAIN
+    )
+    duplicated_scorecard = scorecard.model_copy(
+        update={"scores": (cash_train, *scorecard.scores)}
+    )
+
+    gate = validate_s5_baseline_gate(
+        duplicated_scorecard,
+        evidence_paths=_temp_gate_evidence(
+            tmp_path,
+            duplicated_scorecard.scorecard_id,
+            duplicated_scorecard.scorecard_hash,
+        ),
+    )
+
+    assert gate.status == "BLOCKED"
+    assert "duplicate baseline split cash_no_trade/train" in gate.blockers
+
+
 def test_s5_baseline_gate_blocks_missing_evidence_report() -> None:
     reports = tuple(_report(kind) for kind in BaselineKind)
     scorecard = build_evaluation_scorecard(reports, benchmark_report=reports[0])
