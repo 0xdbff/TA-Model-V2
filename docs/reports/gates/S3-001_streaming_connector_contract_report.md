@@ -13,6 +13,7 @@ Status: partial contract slice for #15 / S3-001; not full FR-002/NFR-003 complet
 - Added heartbeat observed/missed policy, disconnect/reconnect lifecycle states, deterministic retry/backoff helper, and source-register-aligned approval checks.
 - Source approval now models exact S0-004/source-register states for `license_review_status`, `approved_use_status`, and `production_use_status`, plus evidence/reviewer fields.
 - Source IDs support register values such as `coinbase_spot_market_data` and uppercase template IDs such as `TEMPLATE_NEW_SOURCE`.
+- After integration with S2-001, streaming reuses shared `SourceId`, `LicenseReviewStatus`, `ApprovedUseStatus`, and `TradeSide` from `ta_model.contracts.market_data`; streaming-specific approval is named `StreamingSourceApproval`.
 - Fixture-only/test approval uses separate `fixture_only=True` metadata and is limited to `subscription.synthetic_only=True`; it is not a register enum state and cannot authorize non-synthetic streams.
 - Non-synthetic stream authorization requires license review in `{approved, approved_with_restrictions}`, `approved_use_status == paper_approved`, production use in `{paper_only, approved_with_restrictions, production_approved}`, matching source ID, and evidence/reviewer fields.
 - Test-local in-memory synthetic fixture connector performs no network I/O and is not exported from production contracts.
@@ -39,8 +40,8 @@ Status: partial contract slice for #15 / S3-001; not full FR-002/NFR-003 complet
 ## Tests run
 
 - `uv run ruff check .` — `All checks passed!`
-- `uv run mypy src tests` — `Success: no issues found in 7 source files`
-- `uv run pytest` — `43 passed in 0.35s`
+- `uv run mypy src tests` — `Success: no issues found in 11 source files`
+- `uv run pytest` — `57 passed in 0.39s`
 
 ## Anti-drift checks
 

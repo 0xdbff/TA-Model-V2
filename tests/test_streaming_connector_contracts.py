@@ -11,28 +11,26 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
+from ta_model.contracts.market_data import ApprovedUseStatus, LicenseReviewStatus, TradeSide
 from ta_model.contracts.streaming import (
-    ApprovedUseStatus,
     BookLevel,
     ConnectorStatus,
     DisconnectReason,
     HeartbeatEvent,
     HeartbeatPolicy,
     HeartbeatStatus,
-    LicenseReviewStatus,
     LifecycleEvent,
     OrderBookEvent,
     ProductionUseStatus,
     QuoteEvent,
     RetryBackoffPolicy,
-    SourceApproval,
     SourceNotApprovedError,
     StreamChannel,
     StreamEvent,
+    StreamingSourceApproval,
     StreamQualityFlag,
     StreamSubscription,
     TradeEvent,
-    TradeSide,
 )
 
 NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
@@ -45,7 +43,7 @@ class SyntheticStreamingConnector:
         self,
         *,
         subscription: StreamSubscription,
-        source_approval: SourceApproval,
+        source_approval: StreamingSourceApproval,
         events: Sequence[StreamEvent],
         heartbeat_policy: HeartbeatPolicy | None = None,
         retry_policy: RetryBackoffPolicy | None = None,
@@ -154,8 +152,8 @@ def _approval(
     fixture_only: bool = True,
     evidence_link: str | None = None,
     approved_by: str | None = None,
-) -> SourceApproval:
-    return SourceApproval(
+) -> StreamingSourceApproval:
+    return StreamingSourceApproval(
         source_id=source_id,
         license_review_status=license_review_status,
         approved_use_status=approved_use_status,
@@ -333,7 +331,7 @@ def test_invented_fixture_status_fails_validation() -> None:
     payload["approved_use_status"] = "fixture_only_test"
 
     with pytest.raises(ValidationError):
-        SourceApproval.model_validate(payload)
+        StreamingSourceApproval.model_validate(payload)
 
 
 def test_source_id_mismatch_fails_real_stream_approval() -> None:

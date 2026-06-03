@@ -30,43 +30,15 @@ from ta_model.contracts.instrument_master import (
     NonNegativeDecimal,
     PositiveDecimal,
 )
+from ta_model.contracts.market_data import (
+    ApprovedUseStatus,
+    LicenseReviewStatus,
+    SourceId,
+    TradeSide,
+)
 
-SourceId = Annotated[
-    str,
-    Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
-        description=(
-            "Source register identifier, e.g. coinbase_spot_market_data or "
-            "TEMPLATE_NEW_SOURCE."
-        ),
-    ),
-]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveTimedelta = Annotated[timedelta, Field(gt=timedelta(0))]
-
-
-class LicenseReviewStatus(StrEnum):
-    """Normalized `license_review_status` states from the source register."""
-
-    NOT_STARTED = "not_started"
-    IN_REVIEW = "in_review"
-    APPROVED = "approved"
-    APPROVED_WITH_RESTRICTIONS = "approved_with_restrictions"
-    BLOCKED = "blocked"
-    EXPIRED = "expired"
-
-
-class ApprovedUseStatus(StrEnum):
-    """Normalized `approved_use_status` states from the source register."""
-
-    BLOCKED_PENDING_REVIEW = "blocked_pending_review"
-    EXPLORATION_ONLY = "exploration_only"
-    RESEARCH_APPROVED = "research_approved"
-    BACKTEST_APPROVED = "backtest_approved"
-    PAPER_APPROVED = "paper_approved"
-    BLOCKED = "blocked"
 
 
 class ProductionUseStatus(StrEnum):
@@ -127,14 +99,6 @@ class DisconnectReason(StrEnum):
     FIXTURE_COMPLETE = "fixture_complete"
 
 
-class TradeSide(StrEnum):
-    """Optional buyer/seller aggressor side for trade prints."""
-
-    BUYER = "buyer"
-    SELLER = "seller"
-    UNKNOWN = "unknown"
-
-
 class StreamQualityFlag(StrEnum):
     """Schema-level flags reserved for future quality metric consumers."""
 
@@ -147,7 +111,7 @@ class StreamQualityFlag(StrEnum):
     ESTIMATED = "estimated"
 
 
-class SourceApproval(ContractModel):
+class StreamingSourceApproval(ContractModel):
     """Source-register review snapshot consumed before connector startup.
 
     Non-synthetic streaming is intentionally stricter than research/backtest use:
