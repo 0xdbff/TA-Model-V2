@@ -53,7 +53,7 @@ Sortino is `not_applicable` for the fixture rows above because there are no down
 
 - `uv run ruff check .` — passed.
 - `uv run mypy src tests` — passed.
-- `uv run pytest` — 147 passed.
+- `uv run pytest` — 148 passed.
 
 ## Acceptance evidence
 
