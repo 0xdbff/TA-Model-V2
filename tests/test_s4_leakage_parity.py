@@ -477,6 +477,9 @@ def test_intentionally_unsafe_leakage_fixtures_fail_closed() -> None:
             fee_schedules=(_fee(),),
         )
 
+    with pytest.raises(TAFeatureEngineError, match="source_ts"):
+        build_ta_feature_vectors(_batch(("100",), source_offset=1))
+
     with pytest.raises(TAFeatureEngineError, match="strictly increasing"):
         valid = _batch(("100", "101"))
         build_ta_feature_vectors(

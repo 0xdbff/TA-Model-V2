@@ -20,7 +20,7 @@ Requirements: FR-004, FR-006, NFR-001; preserves FR-005, NFR-005
 - Future label mutations change only rows whose configured label horizon uses the mutated observation.
 - Higher-timeframe TA close remains unavailable before the higher-timeframe bar close and becomes available only at/after close.
 - Split assignment is by `feature_ts`; a train row with `label_ts` on the validation boundary remains train.
-- Unsafe fixtures fail closed for label-as-feature leakage, late/unavailable quote source data, late OHLCTV source data in liquidity/cost features, non-monotonic TA inputs, and missing configured label horizon.
+- Unsafe fixtures fail closed for label-as-feature leakage, late/unavailable quote source data, late OHLCTV source data in both TA and liquidity/cost features, non-monotonic TA inputs, and missing configured label horizon.
 
 ## Validation commands
 
@@ -28,7 +28,7 @@ Executed locally in this PR branch:
 
 1. `uv run ruff check .` — passed (`All checks passed!`)
 2. `uv run mypy src tests` — passed (`Success: no issues found in 35 source files`)
-3. `uv run pytest` — passed (`128 passed in 2.21s`)
+3. `uv run pytest` — passed (`128 passed in 0.64s`)
 
 ## Docker/runtime impact
 
