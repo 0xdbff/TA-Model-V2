@@ -1,0 +1,119 @@
+# Master Loop Status — S5 Baselines and Evaluation
+
+**Loop UUID:** `061403c1-9c8c-4b31-8bfe-314df3e170af`  
+**Loop branch:** `agent/loop-061403c1-9c8c-4b31-8bfe-314df3e170af`  
+**Loop worktree:** `/Users/db/dev/TA-Model-v2/TA-Model-V2-loop-061403c1-9c8c-4b31-8bfe-314df3e170af`  
+**Base:** latest `origin/dev` at `b89ff36`  
+**Final PR base:** `dev`  
+**Final PR source:** `agent/loop-061403c1-9c8c-4b31-8bfe-314df3e170af`  
+**Final PR:** Not opened yet.
+
+## Scope and sprint objective
+
+Sprint IDs in scope: `S5-*`  
+GitHub issues in scope: `#23`-`#26`
+
+Sprint objective: implement deterministic baseline strategies and an evaluation
+scorecard before complex model work. The integrated S5 increment must compare
+cash/no-trade, buy-and-hold, basket allocation, TA heuristic, and simple ML
+baselines across configured chronological windows using net-of-cost,
+risk-adjusted, and benchmark-relative metrics, then produce a baseline gate
+decision with blockers called out explicitly.
+
+## Binding controls
+
+- `docs/rules/00_delivery_anti_drift_rules.md`
+- `docs/02_requirements_catalog.csv` (`FR-007`, `FR-014`, `NFR-001`, `NFR-005`)
+- `docs/10_implementation_roadmap.md` Sprint 5
+- `docs/11_tech_stack_and_docker.md`
+- `docs/13_github_issue_backlog.md` S5 entries
+
+Hard guardrails: MVP paper-trading validation only; spot/liquid instruments only;
+no live capital, leverage, derivatives, margin, shorting, autonomous promotion,
+unapproved runtime/datastore/broker additions, risk/kill-switch bypass, lookahead
+leakage, or use of `ingest_ts` as market availability time. Gross PnL alone is
+not sufficient evidence; no-trade/cash must be a first-class logged baseline.
+
+## Issue status
+
+| Issue | Sprint | Status at loop start | Evidence / notes |
+|---|---|---:|---|
+| #23 | S5-001 | Open | Needs cash/no-trade, buy-and-hold, equal-weight or volatility-target baseline report across configured windows. |
+| #24 | S5-002 | Open | Needs simple TA heuristic and simple ML baseline comparator metrics with no leakage. |
+| #25 | S5-003 | Open | Needs scorecard with net return, Sharpe, Sortino, Calmar, drawdown, CVaR, turnover, exposure, costs, benchmark-relative metrics. |
+| #26 | S5-004 | Open | Needs baseline gate decision aggregating #23-#25 evidence with pass/fail/blockers. |
+
+## Dependencies and sequencing
+
+1. `#23` / `S5-001` establishes deterministic baseline output contracts and
+   first baseline reports; it should land before or alongside the first scorecard
+   adapter.
+2. `#24` / `S5-002` can proceed in parallel after confirming the shared
+   dataset/baseline-output interface; ML training must not use validation/test
+   rows as training input.
+3. `#25` / `S5-003` depends on stable baseline output schema from `#23` and
+   `#24`; it must handle missing or not-applicable metrics explicitly.
+4. `#26` / `S5-004` is last and must aggregate validated evidence from `#23`,
+   `#24`, and `#25` into the baseline gate report.
+
+## Sub-agent assignments
+
+| Issue | Sprint | Branch | Worktree | Agent | PR | Status |
+|---|---|---|---|---|---|---|
+| #23 | S5-001 | `agent/23-S5-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-23-S5-001-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending assignment. |
+| #24 | S5-002 | `agent/24-S5-002` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-24-S5-002-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending assignment. |
+| #25 | S5-003 | `agent/25-S5-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-25-S5-003-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on baseline output schema. |
+| #26 | S5-004 | `agent/26-S5-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-26-S5-004-061403c1-9c8c-4b31-8bfe-314df3e170af` | backend-impl | Not opened | Pending; depends on #23-#25 evidence. |
+
+## Validation plan
+
+Required per implementation PR unless a narrower first pass is explicitly noted:
+
+```text
+uv run ruff check .
+uv run mypy src tests
+uv run pytest
+```
+
+Additional focused checks expected:
+
+- #23: baseline strategy contract tests and deterministic fixture report.
+- #24: TA heuristic/ML baseline tests, split/leakage tests, deterministic seed tests.
+- #25: metric formula tests including flat/no-trade, loss-only, empty/undefined,
+  cost, turnover, exposure, and benchmark-relative cases.
+- #26: gate-report tests that fail when required S5 evidence is missing or blocker
+  conditions are present.
+- Integrated loop: full lint/type/test suite; review `docs/reports/gates/S5-*`;
+  confirm Docker/profile impact is either `dev`/`research` only or explicitly
+  `no runtime service impact`.
+
+## QA findings and integration risks
+
+- Baselines must consume S4 dataset/feature contracts where feasible; fixture/local
+  deterministic data is acceptable only at appropriate test/report boundaries.
+- S5 cost modeling is pre-S6; conservative/proxy costs must be documented and not
+  misrepresented as execution-grade slippage/TCA evidence.
+- Volatility-target and ML baselines are leakage-sensitive: volatility estimates,
+  training windows, normalization, and thresholds must use only event-time-available
+  data.
+- Undefined metrics such as Sortino/CVaR on flat or tiny windows must be represented
+  with explicit not-applicable/blocker reasons, not silently coerced into success.
+- Any gross-only report, omitted cash/no-trade baseline, missing benchmark-relative
+  comparison, or future-label usage is a stop-the-line QA blocker.
+
+## Integrated validation log
+
+- Loop worktree created from `origin/dev` at `b89ff36`.
+- Initial planning/exploration completed; no production code merged yet.
+
+## Human-sync decisions
+
+None yet.
+
+## Remaining blockers
+
+- Sub-agent worktrees and branches still need to be created from the latest loop
+  branch.
+- Sub-agent implementation PRs #23-#26 are not opened or reviewed yet.
+- Final integration PR is not ready until all S5 evidence is implemented,
+  reviewed, merged to the loop branch, and validated as an integrated whole.
