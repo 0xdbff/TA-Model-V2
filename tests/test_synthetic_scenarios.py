@@ -30,13 +30,20 @@ def _status_pairs(result: SyntheticScenarioResult) -> tuple[tuple[ReplayFillStat
 
 def _rebuilt_suite_with_results(
     scenario_results: tuple[SyntheticScenarioResult, ...],
+    *,
+    requirement_ids: tuple[str, ...] | None = None,
+    risk_ids: tuple[str, ...] | None = None,
 ) -> SyntheticScenarioSuiteReport:
     suite = run_synthetic_scenario_suite(seed=6004)
+    rebuilt_requirement_ids = (
+        requirement_ids if requirement_ids is not None else suite.requirement_ids
+    )
+    rebuilt_risk_ids = risk_ids if risk_ids is not None else suite.risk_ids
     suite_hash = build_synthetic_scenario_suite_hash(
         run_id=suite.run_id,
         seed=suite.seed,
-        requirement_ids=suite.requirement_ids,
-        risk_ids=suite.risk_ids,
+        requirement_ids=rebuilt_requirement_ids,
+        risk_ids=rebuilt_risk_ids,
         scenario_results=scenario_results,
     )
     return SyntheticScenarioSuiteReport(
@@ -44,6 +51,8 @@ def _rebuilt_suite_with_results(
         suite_hash=suite_hash,
         run_id=suite.run_id,
         seed=suite.seed,
+        requirement_ids=rebuilt_requirement_ids,
+        risk_ids=rebuilt_risk_ids,
         scenario_results=scenario_results,
     )
 
@@ -185,6 +194,24 @@ def test_generated_scenarios_all_pass_contract_validation() -> None:
         SyntheticScenarioId
     )
     assert all("FR-012" in result.traceability for result in suite.scenario_results)
+
+
+def test_suite_missing_empty_or_wrong_requirement_ids_fail_with_rebuilt_identity() -> None:
+    suite = run_synthetic_scenario_suite(seed=6004)
+
+    for requirement_ids in ((), ("FR-999",), ("FR-012", "FR-999")):
+        with pytest.raises(ValidationError, match="requirement_ids"):
+            _rebuilt_suite_with_results(
+                suite.scenario_results, requirement_ids=requirement_ids
+            )
+
+
+def test_suite_missing_required_risk_ids_fail_with_rebuilt_identity() -> None:
+    suite = run_synthetic_scenario_suite(seed=6004)
+
+    for risk_ids in ((), ("RISK-001",), ("RISK-002",), ("RISK-005",)):
+        with pytest.raises(ValidationError, match="risk_ids"):
+            _rebuilt_suite_with_results(suite.scenario_results, risk_ids=risk_ids)
 
 
 def test_crash_missing_risk_or_drawdown_label_fails_with_rebuilt_suite_identity() -> None:

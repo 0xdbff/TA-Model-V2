@@ -131,6 +131,9 @@ class SyntheticScenarioSuiteReport(ContractModel):
 
     @model_validator(mode="after")
     def suite_identity_is_deterministic(self) -> SyntheticScenarioSuiteReport:
+        _validate_suite_traceability(
+            requirement_ids=self.requirement_ids, risk_ids=self.risk_ids
+        )
         _validate_required_scenarios(self.scenario_results)
         for result in self.scenario_results:
             _validate_result_traceability(result)
@@ -210,6 +213,16 @@ def _validate_required_scenarios(results: tuple[SyntheticScenarioResult, ...]) -
         raise ValueError(
             "scenario_results must contain each required scenario exactly once in order"
         )
+
+
+def _validate_suite_traceability(
+    *, requirement_ids: tuple[str, ...], risk_ids: tuple[str, ...]
+) -> None:
+    if requirement_ids != ("FR-012",):
+        raise ValueError("synthetic scenario suite requirement_ids must equal ('FR-012',)")
+    missing_risks = {"RISK-001", "RISK-002"} - set(risk_ids)
+    if missing_risks:
+        raise ValueError("synthetic scenario suite risk_ids must include RISK-001 and RISK-002")
 
 
 def _validate_result_traceability(result: SyntheticScenarioResult) -> None:
