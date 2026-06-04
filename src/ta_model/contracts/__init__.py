@@ -1,5 +1,11 @@
 """Typed contracts used across TA-Model-V2 components."""
 
+from ta_model.contracts.forecasts import (
+    CalibrationStatus,
+    Forecast,
+    ForecastQuantile,
+    ProbabilisticCandidateOutput,
+)
 from ta_model.contracts.instrument_master import (
     Account,
     AccountRiskLimits,
@@ -126,11 +132,14 @@ __all__ = [
     "AssetClassification",
     "AssetStatus",
     "AssetType",
+    "CalibrationStatus",
     "ConstraintValidationResult",
     "ConstraintViolation",
     "DayOfWeek",
     "ExecutionCostModel",
     "FeeSchedule",
+    "Forecast",
+    "ForecastQuantile",
     "HistoricalBackfillPage",
     "HistoricalBackfillRequest",
     "HistoricalProvenance",
@@ -197,6 +206,7 @@ __all__ = [
     "LifecycleEvent",
     "OrderBookEvent",
     "ProductionUseStatus",
+    "ProbabilisticCandidateOutput",
     "QuoteEvent",
     "RetryBackoffPolicy",
     "SourceNotApprovedError",
