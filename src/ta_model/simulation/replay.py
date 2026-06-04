@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
+from datetime import datetime
 from decimal import Decimal
 
 from ta_model.contracts.instrument_master import (
@@ -30,11 +31,11 @@ from ta_model.contracts.simulation import (
     OrderSide,
     ReplayFillStatus,
     ReplayOrderResult,
-    ReplayRejectionCount,
     ReplayRejectReason,
     ReplayReport,
     SimulatedAccountState,
     SimulatedBalance,
+    build_rejection_counts,
     build_replay_order_result_id,
     build_replay_report_hash,
     build_replay_report_id,
@@ -90,7 +91,7 @@ def replay_ohlctv_market_orders(
         if starting_account_state is not None
         else None
     )
-    rejection_counts = _rejection_counts(results)
+    rejection_counts = build_rejection_counts(results=results)
     market_data_hash = _market_data_hash(bar_tuple)
     requirement_ids = _requirement_ids(
         execution_cost_model=execution_cost_model,
@@ -149,22 +150,17 @@ def _replay_one(
     if not eligible:
         return _unfilled_result(intent=intent, reason=ReplayRejectReason.NO_FUTURE_ELIGIBLE_EVENT)
 
-    if instrument_master_snapshot is not None:
-        first_attempt_index = (
-            0
-            if execution_cost_model is None
-            else min(execution_cost_model.latency_bars, len(eligible) - 1)
-        )
-        constraint_reason = _constraint_reject_reason(
-            intent=intent,
-            snapshot=instrument_master_snapshot,
-            reference_price=eligible[first_attempt_index][1].open,
-        )
-        if constraint_reason is not None:
-            return _unfilled_result(intent=intent, reason=constraint_reason)
-
     if execution_cost_model is None:
         _, bar = eligible[0]
+        if instrument_master_snapshot is not None:
+            constraint_reason = _constraint_reject_reason(
+                intent=intent,
+                snapshot=instrument_master_snapshot,
+                reference_price=bar.open,
+                effective_at=bar.open_ts,
+            )
+            if constraint_reason is not None:
+                return _unfilled_result(intent=intent, reason=constraint_reason)
         filled_quantity = intent.quantity
         reference_notional = bar.open * filled_quantity
         result = ReplayOrderResult.model_construct(
@@ -215,6 +211,21 @@ def _replay_one(
 
     eligible_event_index = eligible[0][0]
     fill_attempt_event_index, bar = eligible[execution_cost_model.latency_bars]
+    if instrument_master_snapshot is not None:
+        constraint_reason = _constraint_reject_reason(
+            intent=intent,
+            snapshot=instrument_master_snapshot,
+            reference_price=bar.open,
+            effective_at=bar.open_ts,
+        )
+        if constraint_reason is not None:
+            return _unfilled_result(
+                intent=intent,
+                reason=constraint_reason,
+                execution_cost_model=execution_cost_model,
+                eligible_event_index=eligible_event_index,
+                fill_attempt_event_index=fill_attempt_event_index,
+            )
     max_fill_quantity = bar.base_volume * execution_cost_model.max_participation_rate
     if max_fill_quantity <= 0:
         return _unfilled_result(
@@ -402,13 +413,14 @@ def _constraint_reject_reason(
     intent: OrderIntent,
     snapshot: InstrumentMasterSnapshot,
     reference_price: Decimal,
+    effective_at: datetime,
 ) -> ReplayRejectReason | None:
     active_constraints = [
         constraint
         for constraint in snapshot.instrument_constraints
         if constraint.instrument_id == intent.instrument_id
-        and constraint.effective_from <= intent.submitted_at
-        and (constraint.effective_to is None or intent.submitted_at < constraint.effective_to)
+        and constraint.effective_from <= effective_at
+        and (constraint.effective_to is None or effective_at < constraint.effective_to)
     ]
     if len(active_constraints) != 1:
         return ReplayRejectReason.CONSTRAINT_VIOLATION
@@ -478,17 +490,6 @@ def _build_account_state(
         for (venue_id, asset_id), available in sorted(balances.items())
     )
     return SimulatedAccountState(account_id=account_state.account_id, balances=final_balances)
-
-
-def _rejection_counts(results: tuple[ReplayOrderResult, ...]) -> tuple[ReplayRejectionCount, ...]:
-    counts: dict[ReplayRejectReason, int] = {}
-    for result in results:
-        if result.reason is not None:
-            counts[result.reason] = counts.get(result.reason, 0) + 1
-    return tuple(
-        ReplayRejectionCount(reason=reason, count=counts[reason])
-        for reason in sorted(counts, key=lambda item: item.value)
-    )
 
 
 def _requirement_ids(

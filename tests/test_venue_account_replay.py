@@ -7,15 +7,22 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from ta_model.contracts.instrument_master import InstrumentMasterSnapshot, OrderType
 from ta_model.contracts.market_data import OHLCTVBar
 from ta_model.contracts.simulation import (
     OrderIntent,
     OrderSide,
     ReplayFillStatus,
+    ReplayRejectionCount,
     ReplayRejectReason,
+    ReplayReport,
     SimulatedAccountState,
     SimulatedBalance,
+    build_replay_report_hash,
+    build_replay_report_id,
     make_execution_cost_model,
 )
 from ta_model.simulation.replay import replay_ohlctv_market_orders
@@ -31,13 +38,39 @@ def _snapshot(
     *,
     venue_status: str = "active",
     instrument_status: str = "trading",
+    account_status: str = "active",
     min_notional: str = "1.00",
+    market_supported: bool = True,
 ) -> InstrumentMasterSnapshot:
     payload = json.loads(FIXTURE.read_text())
     payload["venues"][0]["status"] = venue_status
     payload["instruments"][0]["status"] = instrument_status
+    payload["accounts"][0]["status"] = account_status
     payload["instrument_constraints"][0]["min_notional"] = min_notional
     payload["instruments"][0]["min_notional"] = min_notional
+    if not market_supported:
+        payload["venues"][0]["supported_order_types"] = ["limit"]
+        for instrument in payload["instruments"]:
+            instrument["supported_order_types"] = ["limit"]
+    return InstrumentMasterSnapshot.model_validate(payload)
+
+
+def _snapshot_without_place_orders() -> InstrumentMasterSnapshot:
+    payload = json.loads(FIXTURE.read_text())
+    payload["accounts"][0]["trading_permissions"] = ["read_market_data", "view_balances"]
+    return InstrumentMasterSnapshot.model_validate(payload)
+
+
+def _snapshot_with_constraint_rollover() -> InstrumentMasterSnapshot:
+    payload = json.loads(FIXTURE.read_text())
+    old_constraint = payload["instrument_constraints"][0]
+    old_constraint["effective_to"] = "2026-01-01T00:02:00Z"
+    new_constraint = dict(old_constraint)
+    new_constraint["constraint_id"] = "COINBASE_SPOT:BTC-USD:CONSTRAINTS:STRICT:2026Q1"
+    new_constraint["min_notional"] = "1000.00"
+    new_constraint["effective_from"] = "2026-01-01T00:02:00Z"
+    new_constraint["effective_to"] = None
+    payload["instrument_constraints"].append(new_constraint)
     return InstrumentMasterSnapshot.model_validate(payload)
 
 
@@ -222,6 +255,53 @@ def test_inactive_instrument_fails_closed_before_balance_mutation() -> None:
     assert _balance(report.final_account_state, "BTC") == Decimal("1")
 
 
+def test_disabled_account_fails_closed_before_balance_mutation() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100")))
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:ACCOUNT-DISABLED",
+        instrument_master_snapshot=_snapshot(account_status="disabled"),
+        starting_account_state=_account_state(),
+    )
+
+    assert report.results[0].status is ReplayFillStatus.REJECTED
+    assert report.results[0].reason is ReplayRejectReason.ACCOUNT_NOT_TRADABLE
+    assert report.final_account_state is not None
+    assert _balance(report.final_account_state, "USD") == Decimal("1000")
+
+
+def test_missing_place_order_permission_fails_closed() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100")))
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:ACCOUNT-PERMISSION",
+        instrument_master_snapshot=_snapshot_without_place_orders(),
+        starting_account_state=_account_state(),
+    )
+
+    assert report.results[0].status is ReplayFillStatus.REJECTED
+    assert report.results[0].reason is ReplayRejectReason.ACCOUNT_NOT_TRADABLE
+
+
+def test_unsupported_order_type_from_metadata_fails_closed() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100")))
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:ORDER-TYPE",
+        instrument_master_snapshot=_snapshot(market_supported=False),
+        starting_account_state=_account_state(),
+    )
+
+    assert report.results[0].status is ReplayFillStatus.REJECTED
+    assert report.results[0].reason is ReplayRejectReason.UNSUPPORTED_ORDER_TYPE
+
+
 def test_constraint_violation_rejects_and_is_counted() -> None:
     bars = (_bar(0), _bar(1, open_price=Decimal("100")))
 
@@ -238,3 +318,151 @@ def test_constraint_violation_rejects_and_is_counted() -> None:
     assert [(item.reason, item.count) for item in report.rejection_counts] == [
         (ReplayRejectReason.CONSTRAINT_VIOLATION, 1)
     ]
+
+
+def test_tick_size_constraint_violation_rejects() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100.001")))
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:TICK",
+        instrument_master_snapshot=_snapshot(),
+        starting_account_state=_account_state(),
+    )
+
+    assert report.results[0].status is ReplayFillStatus.REJECTED
+    assert report.results[0].reason is ReplayRejectReason.CONSTRAINT_VIOLATION
+
+
+def test_lot_size_constraint_violation_rejects() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100")))
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(
+            _intent(quantity=Decimal("1.000000001"), submitted_at=bars[0].close_ts),
+        ),
+        run_id="REPLAY:S6-003:LOT",
+        instrument_master_snapshot=_snapshot(),
+        starting_account_state=_account_state(),
+    )
+
+    assert report.results[0].status is ReplayFillStatus.REJECTED
+    assert report.results[0].reason is ReplayRejectReason.CONSTRAINT_VIOLATION
+
+
+def test_latency_constraint_rollover_uses_fill_attempt_event_time() -> None:
+    bars = (
+        _bar(0, open_price=Decimal("100")),
+        _bar(1, open_price=Decimal("100")),
+        _bar(2, open_price=Decimal("100")),
+    )
+    model = make_execution_cost_model(
+        taker_fee_rate=Decimal("0.001"),
+        spread_bps=Decimal("0"),
+        slippage_bps=Decimal("0"),
+        latency_bars=1,
+    )
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:ROLLOVER",
+        execution_cost_model=model,
+        instrument_master_snapshot=_snapshot_with_constraint_rollover(),
+        starting_account_state=_account_state(),
+    )
+
+    result = report.results[0]
+    assert result.status is ReplayFillStatus.REJECTED
+    assert result.reason is ReplayRejectReason.CONSTRAINT_VIOLATION
+    assert result.fill_attempt_event_index == 2
+
+
+def test_latency_past_available_events_returns_no_future_before_constraints() -> None:
+    bars = (_bar(0, open_price=Decimal("100")), _bar(1, open_price=Decimal("100")))
+    model = make_execution_cost_model(
+        taker_fee_rate=Decimal("0.001"),
+        spread_bps=Decimal("0"),
+        slippage_bps=Decimal("0"),
+        latency_bars=1,
+    )
+
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:LATENCY-MISSING",
+        execution_cost_model=model,
+        instrument_master_snapshot=_snapshot(min_notional="1000.00"),
+        starting_account_state=_account_state(),
+    )
+
+    assert report.results[0].status is ReplayFillStatus.UNFILLED
+    assert report.results[0].reason is ReplayRejectReason.NO_FUTURE_ELIGIBLE_EVENT
+
+
+def test_replay_report_rejects_mismatched_rejection_counts_even_with_rebuilt_hash() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100")))
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:MISMATCHED-COUNTS",
+        instrument_master_snapshot=_snapshot(),
+        starting_account_state=_account_state(usd=Decimal("99"), btc=Decimal("1")),
+    )
+    mismatched_counts = (
+        ReplayRejectionCount(reason=ReplayRejectReason.VENUE_NOT_TRADABLE, count=1),
+    )
+    report_hash = build_replay_report_hash(
+        run_id=report.run_id,
+        market_data_hash=report.market_data_hash,
+        results=report.results,
+        requirement_ids=report.requirement_ids,
+        rejection_counts=mismatched_counts,
+        final_account_state=report.final_account_state,
+    )
+
+    with pytest.raises(ValidationError, match="rejection_counts"):
+        ReplayReport(
+            **report.model_dump(
+                exclude={"replay_report_id", "replay_report_hash", "rejection_counts"}
+            ),
+            rejection_counts=mismatched_counts,
+            replay_report_hash=report_hash,
+            replay_report_id=build_replay_report_id(replay_report_hash=report_hash),
+        )
+
+
+def test_replay_report_rejects_empty_counts_for_rejected_result_with_rebuilt_hash() -> None:
+    bars = (_bar(0), _bar(1, open_price=Decimal("100")))
+    report = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(quantity=Decimal("1"), submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-003:EMPTY-COUNTS",
+        instrument_master_snapshot=_snapshot(),
+        starting_account_state=_account_state(usd=Decimal("99"), btc=Decimal("1")),
+    )
+    report_hash = build_replay_report_hash(
+        run_id=report.run_id,
+        market_data_hash=report.market_data_hash,
+        results=report.results,
+        requirement_ids=report.requirement_ids,
+        rejection_counts=(),
+        final_account_state=report.final_account_state,
+    )
+
+    with pytest.raises(ValidationError, match="rejection_counts"):
+        ReplayReport(
+            **report.model_dump(
+                exclude={"replay_report_id", "replay_report_hash", "rejection_counts"}
+            ),
+            rejection_counts=(),
+            replay_report_hash=report_hash,
+            replay_report_id=build_replay_report_id(replay_report_hash=report_hash),
+        )
+
+
+def test_zero_count_rejection_accounting_is_invalid() -> None:
+    with pytest.raises(ValidationError, match="greater than 0"):
+        ReplayRejectionCount(reason=ReplayRejectReason.INSUFFICIENT_CASH, count=0)

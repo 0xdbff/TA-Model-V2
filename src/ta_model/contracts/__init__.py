@@ -58,6 +58,7 @@ from ta_model.contracts.simulation import (
     ReplayReport,
     SimulatedAccountState,
     SimulatedBalance,
+    build_rejection_counts,
     make_execution_cost_model,
 )
 from ta_model.contracts.stream_health import (
@@ -142,6 +143,7 @@ __all__ = [
     "ReplayReport",
     "SimulatedAccountState",
     "SimulatedBalance",
+    "build_rejection_counts",
     "make_execution_cost_model",
     "SourceApproval",
     "SourceId",

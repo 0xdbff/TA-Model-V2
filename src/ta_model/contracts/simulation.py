@@ -102,7 +102,7 @@ class ReplayRejectionCount(ContractModel):
     """Deterministic rejection accounting by machine-readable reason."""
 
     reason: ReplayRejectReason
-    count: int = Field(ge=0)
+    count: int = Field(gt=0)
 
 
 class ExecutionCostModel(ContractModel):
@@ -295,6 +295,9 @@ class ReplayReport(ContractModel):
     def report_identity_is_deterministic(self) -> Self:
         if self.result_ids != tuple(result.replay_order_result_id for result in self.results):
             raise ValueError("result_ids must match results")
+        expected_rejection_counts = build_rejection_counts(results=self.results)
+        if self.rejection_counts != expected_rejection_counts:
+            raise ValueError("rejection_counts must match result reasons")
         expected_hash = build_replay_report_hash(
             run_id=self.run_id,
             market_data_hash=self.market_data_hash,
@@ -310,6 +313,21 @@ class ReplayReport(ContractModel):
         ):
             raise ValueError("replay_report_id is not deterministic")
         return self
+
+
+def build_rejection_counts(
+    *, results: tuple[ReplayOrderResult, ...]
+) -> tuple[ReplayRejectionCount, ...]:
+    """Build deterministic non-zero rejection accounting from replay results."""
+
+    counts: dict[ReplayRejectReason, int] = {}
+    for result in results:
+        if result.reason is not None:
+            counts[result.reason] = counts.get(result.reason, 0) + 1
+    return tuple(
+        ReplayRejectionCount(reason=reason, count=counts[reason])
+        for reason in sorted(counts, key=lambda item: item.value)
+    )
 
 
 def build_replay_order_result_id(*, result: ReplayOrderResult) -> str:
