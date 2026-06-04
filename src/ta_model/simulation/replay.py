@@ -1,4 +1,4 @@
-"""Event-time historical replay foundation for S6-001.
+"""Event-time historical replay foundation with optional S6-002 costs.
 
 The engine uses OHLCTV close_ts as market-data availability time and fills market
 orders only on the next eligible bar open. It intentionally ignores ingest_ts for
@@ -11,11 +11,14 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
+from decimal import Decimal
 
 from ta_model.contracts.instrument_master import OrderType
 from ta_model.contracts.market_data import OHLCTVBar
 from ta_model.contracts.simulation import (
+    ExecutionCostModel,
     OrderIntent,
+    OrderSide,
     ReplayFillStatus,
     ReplayOrderResult,
     ReplayRejectReason,
@@ -31,7 +34,11 @@ class ReplayBuildError(ValueError):
 
 
 def replay_ohlctv_market_orders(
-    *, bars: Iterable[OHLCTVBar], order_intents: Iterable[OrderIntent], run_id: str
+    *,
+    bars: Iterable[OHLCTVBar],
+    order_intents: Iterable[OrderIntent],
+    run_id: str,
+    execution_cost_model: ExecutionCostModel | None = None,
 ) -> ReplayReport:
     """Replay market order intents against validated event-time OHLCTV bars.
 
@@ -47,13 +54,21 @@ def replay_ohlctv_market_orders(
     _validate_bars_are_safe(bar_tuple)
     _validate_order_intents(intent_tuple)
 
-    results = tuple(_replay_one(intent=intent, bars=bar_tuple) for intent in intent_tuple)
+    results = tuple(
+        _replay_one(intent=intent, bars=bar_tuple, execution_cost_model=execution_cost_model)
+        for intent in intent_tuple
+    )
     market_data_hash = _market_data_hash(bar_tuple)
+    requirement_ids = (
+        ("FR-012", "NFR-001")
+        if execution_cost_model is None
+        else ("FR-012", "NFR-001", "RISK-005")
+    )
     report_hash = build_replay_report_hash(
         run_id=run_id,
         market_data_hash=market_data_hash,
         results=results,
-        requirement_ids=("FR-012", "NFR-001"),
+        requirement_ids=requirement_ids,
     )
     return ReplayReport(
         replay_report_id=build_replay_report_id(replay_report_hash=report_hash),
@@ -62,45 +77,164 @@ def replay_ohlctv_market_orders(
         market_data_hash=market_data_hash,
         result_ids=tuple(result.replay_order_result_id for result in results),
         results=results,
+        requirement_ids=requirement_ids,
     )
 
 
-def _replay_one(*, intent: OrderIntent, bars: tuple[OHLCTVBar, ...]) -> ReplayOrderResult:
+def _replay_one(
+    *,
+    intent: OrderIntent,
+    bars: tuple[OHLCTVBar, ...],
+    execution_cost_model: ExecutionCostModel | None,
+) -> ReplayOrderResult:
     if intent.order_type is not OrderType.MARKET:
         return _unfilled_result(intent=intent, reason=ReplayRejectReason.UNSUPPORTED_ORDER_TYPE)
 
-    for bar in bars:
-        if bar.instrument_id != intent.instrument_id or bar.venue_id != intent.venue_id:
-            continue
-        if bar.open_ts >= intent.submitted_at and bar.close_ts > intent.submitted_at:
-            result = ReplayOrderResult.model_construct(
-                replay_order_result_id="REPLAYORDER:PLACEHOLDER",
-                client_order_id=intent.client_order_id,
-                trace_id=intent.trace_id,
-                source_decision_id=intent.source_decision_id,
-                instrument_id=intent.instrument_id,
-                venue_id=intent.venue_id,
-                side=intent.side,
-                order_type=intent.order_type,
-                quantity=intent.quantity,
-                submitted_at=intent.submitted_at,
-                status=ReplayFillStatus.FILLED,
-                fill_price=bar.open,
-                filled_quantity=intent.quantity,
-                fill_event_open_ts=bar.open_ts,
-                fill_event_close_ts=bar.close_ts,
-                fill_event_source_ts=bar.source_ts,
-                fill_raw_payload_id=bar.raw_payload_id,
-            )
-            result_id = build_replay_order_result_id(result=result)
-            return ReplayOrderResult(
-                **result.model_dump(exclude={"replay_order_result_id"}),
-                replay_order_result_id=result_id,
-            )
-    return _unfilled_result(intent=intent, reason=ReplayRejectReason.NO_FUTURE_ELIGIBLE_EVENT)
+    eligible = tuple(
+        (index, bar)
+        for index, bar in enumerate(bars)
+        if bar.instrument_id == intent.instrument_id
+        and bar.venue_id == intent.venue_id
+        and bar.open_ts >= intent.submitted_at
+        and bar.close_ts > intent.submitted_at
+    )
+    if not eligible:
+        return _unfilled_result(intent=intent, reason=ReplayRejectReason.NO_FUTURE_ELIGIBLE_EVENT)
+
+    if execution_cost_model is None:
+        _, bar = eligible[0]
+        filled_quantity = intent.quantity
+        reference_notional = bar.open * filled_quantity
+        result = ReplayOrderResult.model_construct(
+            replay_order_result_id="REPLAYORDER:PLACEHOLDER",
+            client_order_id=intent.client_order_id,
+            trace_id=intent.trace_id,
+            source_decision_id=intent.source_decision_id,
+            instrument_id=intent.instrument_id,
+            venue_id=intent.venue_id,
+            side=intent.side,
+            order_type=intent.order_type,
+            quantity=intent.quantity,
+            submitted_at=intent.submitted_at,
+            status=ReplayFillStatus.FILLED,
+            fill_price=bar.open,
+            filled_quantity=filled_quantity,
+            remaining_quantity=Decimal("0"),
+            fill_event_open_ts=bar.open_ts,
+            fill_event_close_ts=bar.close_ts,
+            fill_event_source_ts=bar.source_ts,
+            fill_raw_payload_id=bar.raw_payload_id,
+            arrival_reference_price=bar.open,
+            effective_fill_price=bar.open,
+            reference_notional=reference_notional,
+            effective_notional=reference_notional,
+        )
+        result_id = build_replay_order_result_id(result=result)
+        return ReplayOrderResult(
+            **result.model_dump(exclude={"replay_order_result_id"}),
+            replay_order_result_id=result_id,
+        )
+
+    if execution_cost_model.latency_bars >= len(eligible):
+        return _unfilled_result(
+            intent=intent,
+            reason=ReplayRejectReason.NO_FUTURE_ELIGIBLE_EVENT,
+            execution_cost_model=execution_cost_model,
+            eligible_event_index=eligible[0][0],
+        )
+
+    eligible_event_index = eligible[0][0]
+    fill_attempt_event_index, bar = eligible[execution_cost_model.latency_bars]
+    max_fill_quantity = bar.base_volume * execution_cost_model.max_participation_rate
+    if max_fill_quantity <= 0:
+        return _unfilled_result(
+            intent=intent,
+            reason=ReplayRejectReason.INSUFFICIENT_LIQUIDITY,
+            execution_cost_model=execution_cost_model,
+            eligible_event_index=eligible_event_index,
+            fill_attempt_event_index=fill_attempt_event_index,
+        )
+
+    filled_quantity = min(intent.quantity, max_fill_quantity)
+    if filled_quantity < intent.quantity and not execution_cost_model.allow_partial_fills:
+        return _unfilled_result(
+            intent=intent,
+            reason=ReplayRejectReason.INSUFFICIENT_LIQUIDITY,
+            execution_cost_model=execution_cost_model,
+            eligible_event_index=eligible_event_index,
+            fill_attempt_event_index=fill_attempt_event_index,
+        )
+
+    status = (
+        ReplayFillStatus.FILLED
+        if filled_quantity == intent.quantity
+        else ReplayFillStatus.PARTIALLY_FILLED
+    )
+    adverse_bps = execution_cost_model.spread_bps + execution_cost_model.slippage_bps
+    adjustment = adverse_bps / Decimal("10000")
+    arrival_reference_price = bar.open
+    effective_fill_price = (
+        arrival_reference_price * (Decimal("1") + adjustment)
+        if intent.side is OrderSide.BUY
+        else arrival_reference_price * (Decimal("1") - adjustment)
+    )
+    reference_notional = arrival_reference_price * filled_quantity
+    effective_notional = effective_fill_price * filled_quantity
+    fee_cost = effective_notional.copy_abs() * execution_cost_model.taker_fee_rate
+    spread_cost = reference_notional.copy_abs() * execution_cost_model.spread_bps / Decimal("10000")
+    slippage_cost = (
+        reference_notional.copy_abs() * execution_cost_model.slippage_bps / Decimal("10000")
+    )
+    total_cost = fee_cost + spread_cost + slippage_cost
+
+    result = ReplayOrderResult.model_construct(
+        replay_order_result_id="REPLAYORDER:PLACEHOLDER",
+        client_order_id=intent.client_order_id,
+        trace_id=intent.trace_id,
+        source_decision_id=intent.source_decision_id,
+        instrument_id=intent.instrument_id,
+        venue_id=intent.venue_id,
+        side=intent.side,
+        order_type=intent.order_type,
+        quantity=intent.quantity,
+        submitted_at=intent.submitted_at,
+        status=status,
+        fill_price=effective_fill_price,
+        filled_quantity=filled_quantity,
+        remaining_quantity=intent.quantity - filled_quantity,
+        fill_event_open_ts=bar.open_ts,
+        fill_event_close_ts=bar.close_ts,
+        fill_event_source_ts=bar.source_ts,
+        fill_raw_payload_id=bar.raw_payload_id,
+        cost_model_id=execution_cost_model.cost_model_id,
+        cost_model_hash=execution_cost_model.cost_model_hash,
+        latency_bars=execution_cost_model.latency_bars,
+        eligible_event_index=eligible_event_index,
+        fill_attempt_event_index=fill_attempt_event_index,
+        arrival_reference_price=arrival_reference_price,
+        effective_fill_price=effective_fill_price,
+        reference_notional=reference_notional,
+        effective_notional=effective_notional,
+        fee_cost=fee_cost,
+        spread_cost=spread_cost,
+        slippage_cost=slippage_cost,
+        total_cost=total_cost,
+    )
+    result_id = build_replay_order_result_id(result=result)
+    return ReplayOrderResult(
+        **result.model_dump(exclude={"replay_order_result_id"}),
+        replay_order_result_id=result_id,
+    )
 
 
-def _unfilled_result(*, intent: OrderIntent, reason: ReplayRejectReason) -> ReplayOrderResult:
+def _unfilled_result(
+    *,
+    intent: OrderIntent,
+    reason: ReplayRejectReason,
+    execution_cost_model: ExecutionCostModel | None = None,
+    eligible_event_index: int | None = None,
+    fill_attempt_event_index: int | None = None,
+) -> ReplayOrderResult:
     status = (
         ReplayFillStatus.REJECTED
         if reason is ReplayRejectReason.UNSUPPORTED_ORDER_TYPE
@@ -119,6 +253,16 @@ def _unfilled_result(*, intent: OrderIntent, reason: ReplayRejectReason) -> Repl
         submitted_at=intent.submitted_at,
         status=status,
         reason=reason,
+        remaining_quantity=intent.quantity,
+        cost_model_id=(
+            execution_cost_model.cost_model_id if execution_cost_model is not None else None
+        ),
+        cost_model_hash=(
+            execution_cost_model.cost_model_hash if execution_cost_model is not None else None
+        ),
+        latency_bars=execution_cost_model.latency_bars if execution_cost_model is not None else 0,
+        eligible_event_index=eligible_event_index,
+        fill_attempt_event_index=fill_attempt_event_index,
     )
     result_id = build_replay_order_result_id(result=result)
     return ReplayOrderResult(
