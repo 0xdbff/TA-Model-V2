@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+import ta_model.contracts as public_contracts
 from ta_model.contracts.instrument_master import OrderType
 from ta_model.contracts.market_data import OHLCTVBar
 from ta_model.contracts.simulation import (
@@ -86,6 +87,27 @@ def _cost_model(
         latency_bars=latency_bars,
         max_participation_rate=participation,
     )
+
+
+def test_public_contract_exports_include_execution_cost_model_builder() -> None:
+    model = public_contracts.make_execution_cost_model(
+        taker_fee_rate=Decimal("0.001"),
+        spread_bps=Decimal("5"),
+        slippage_bps=Decimal("10"),
+    )
+
+    assert isinstance(model, public_contracts.ExecutionCostModel)
+    assert public_contracts.ExecutionCostModel is ExecutionCostModel
+    assert public_contracts.make_execution_cost_model is make_execution_cost_model
+
+
+def test_excessive_taker_fee_rate_is_rejected_by_cost_model_builder() -> None:
+    with pytest.raises(ValidationError, match="less than or equal to 0.05"):
+        make_execution_cost_model(
+            taker_fee_rate=Decimal("0.0501"),
+            spread_bps=Decimal("5"),
+            slippage_bps=Decimal("10"),
+        )
 
 
 def test_cost_replay_full_fill_has_explicit_deterministic_attribution() -> None:
