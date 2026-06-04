@@ -48,12 +48,14 @@ from ta_model.contracts.market_data import (
     TradeSide,
 )
 from ta_model.contracts.simulation import (
+    ExecutionCostModel,
     OrderIntent,
     OrderSide,
     ReplayFillStatus,
     ReplayOrderResult,
     ReplayRejectReason,
     ReplayReport,
+    make_execution_cost_model,
 )
 from ta_model.contracts.stream_health import (
     DataHealthGate,
@@ -107,6 +109,7 @@ __all__ = [
     "ConstraintValidationResult",
     "ConstraintViolation",
     "DayOfWeek",
+    "ExecutionCostModel",
     "FeeSchedule",
     "HistoricalBackfillPage",
     "HistoricalBackfillRequest",
@@ -133,6 +136,7 @@ __all__ = [
     "ReplayOrderResult",
     "ReplayRejectReason",
     "ReplayReport",
+    "make_execution_cost_model",
     "SourceApproval",
     "SourceId",
     "TradingPermission",

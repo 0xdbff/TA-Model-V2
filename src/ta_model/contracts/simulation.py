@@ -8,9 +8,10 @@ Traceability:
   from being hidden in gross-only backtests.
 
 Scope:
-- S6-001 implements a minimal OHLCTV historical replay foundation only.
-- No paper/live gateway, risk engine, costs/slippage model, leverage, derivatives,
-  margin, shorting, market making, HFT, or live capital path is introduced.
+- S6-001 implements the OHLCTV event-time replay foundation.
+- S6-002 adds deterministic execution-cost/fill realism for historical replay.
+- No paper/live gateway, risk engine, leverage, derivatives, margin, shorting,
+  market making, HFT, or live capital path is introduced.
 """
 
 from __future__ import annotations
@@ -25,10 +26,10 @@ from typing import Self
 from pydantic import AwareDatetime, Field, model_validator
 
 from ta_model.contracts.instrument_master import (
+    BoundedFeeRate,
     CanonicalId,
     ContractModel,
     NonEmptyString,
-    NonNegativeDecimal,
     OrderType,
     PositiveDecimal,
 )
@@ -67,13 +68,15 @@ class ExecutionCostModel(ContractModel):
     """
 
     cost_model_id: CanonicalId
-    taker_fee_rate: NonNegativeDecimal = Field(
+    taker_fee_rate: BoundedFeeRate = Field(
         description="Taker fee fraction applied to effective filled notional."
     )
-    spread_bps: NonNegativeDecimal = Field(
+    spread_bps: Decimal = Field(
+        ge=Decimal("0"),
         description="Half-spread style adverse price adjustment in basis points."
     )
-    slippage_bps: NonNegativeDecimal = Field(
+    slippage_bps: Decimal = Field(
+        ge=Decimal("0"),
         description="Additional adverse price adjustment in basis points."
     )
     latency_bars: int = Field(
@@ -164,6 +167,12 @@ class ReplayOrderResult(ContractModel):
 
     @model_validator(mode="after")
     def result_is_consistent_and_deterministic(self) -> Self:
+        if (self.cost_model_id is None) != (self.cost_model_hash is None):
+            raise ValueError("cost_model_id and cost_model_hash must be set together")
+        if self.total_cost != self.fee_cost + self.spread_cost + self.slippage_cost:
+            raise ValueError("total_cost must equal fee_cost plus spread_cost plus slippage_cost")
+        if self.total_cost > 0 and (self.cost_model_id is None or self.cost_model_hash is None):
+            raise ValueError("positive execution costs require cost model identity")
         if self.remaining_quantity != self.quantity - self.filled_quantity:
             raise ValueError("remaining_quantity must equal quantity minus filled_quantity")
         if self.status in {ReplayFillStatus.FILLED, ReplayFillStatus.PARTIALLY_FILLED}:
@@ -184,16 +193,36 @@ class ReplayOrderResult(ContractModel):
                 or self.fill_raw_payload_id is None
             ):
                 raise ValueError("filled replay result requires fill event lineage")
-            if (
-                self.effective_fill_price is not None
-                and self.effective_fill_price != self.fill_price
-            ):
+            if self.arrival_reference_price is None or self.effective_fill_price is None:
+                raise ValueError("filled replay result requires price attribution")
+            if self.effective_fill_price != self.fill_price:
                 raise ValueError("effective_fill_price must match fill_price when present")
+            if self.reference_notional != self.arrival_reference_price * self.filled_quantity:
+                raise ValueError("reference_notional must match arrival price times fill quantity")
+            if self.effective_notional != self.effective_fill_price * self.filled_quantity:
+                raise ValueError(
+                    "effective_notional must match effective price times fill quantity"
+                )
         else:
             if self.reason is None:
                 raise ValueError("unfilled/rejected replay result requires reason")
             if self.fill_price is not None or self.filled_quantity != 0:
                 raise ValueError("unfilled/rejected replay result must not carry a fill")
+            if (
+                self.fill_event_open_ts is not None
+                or self.fill_event_close_ts is not None
+                or self.fill_event_source_ts is not None
+                or self.fill_raw_payload_id is not None
+                or self.arrival_reference_price is not None
+                or self.effective_fill_price is not None
+                or self.reference_notional != 0
+                or self.effective_notional != 0
+                or self.fee_cost != 0
+                or self.spread_cost != 0
+                or self.slippage_cost != 0
+                or self.total_cost != 0
+            ):
+                raise ValueError("unfilled/rejected replay result must not carry attribution")
             if self.remaining_quantity != self.quantity:
                 raise ValueError(
                     "unfilled/rejected replay result must leave full quantity remaining"

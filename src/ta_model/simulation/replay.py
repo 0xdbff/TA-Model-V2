@@ -103,6 +103,8 @@ def _replay_one(
 
     if execution_cost_model is None:
         _, bar = eligible[0]
+        filled_quantity = intent.quantity
+        reference_notional = bar.open * filled_quantity
         result = ReplayOrderResult.model_construct(
             replay_order_result_id="REPLAYORDER:PLACEHOLDER",
             client_order_id=intent.client_order_id,
@@ -116,12 +118,16 @@ def _replay_one(
             submitted_at=intent.submitted_at,
             status=ReplayFillStatus.FILLED,
             fill_price=bar.open,
-            filled_quantity=intent.quantity,
+            filled_quantity=filled_quantity,
             remaining_quantity=Decimal("0"),
             fill_event_open_ts=bar.open_ts,
             fill_event_close_ts=bar.close_ts,
             fill_event_source_ts=bar.source_ts,
             fill_raw_payload_id=bar.raw_payload_id,
+            arrival_reference_price=bar.open,
+            effective_fill_price=bar.open,
+            reference_notional=reference_notional,
+            effective_notional=reference_notional,
         )
         result_id = build_replay_order_result_id(result=result)
         return ReplayOrderResult(

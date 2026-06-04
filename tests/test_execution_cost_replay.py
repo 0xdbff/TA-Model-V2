@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from ta_model.contracts.instrument_master import OrderType
 from ta_model.contracts.market_data import OHLCTVBar
 from ta_model.contracts.simulation import (
@@ -12,7 +15,9 @@ from ta_model.contracts.simulation import (
     OrderIntent,
     OrderSide,
     ReplayFillStatus,
+    ReplayOrderResult,
     ReplayRejectReason,
+    build_replay_order_result_id,
     make_execution_cost_model,
 )
 from ta_model.simulation.replay import replay_ohlctv_market_orders
@@ -47,14 +52,19 @@ def _bar(index: int, *, base_volume: Decimal = Decimal("10")) -> OHLCTVBar:
     )
 
 
-def _intent(*, quantity: Decimal = Decimal("1"), submitted_at: datetime) -> OrderIntent:
+def _intent(
+    *,
+    quantity: Decimal = Decimal("1"),
+    submitted_at: datetime,
+    side: OrderSide = OrderSide.BUY,
+) -> OrderIntent:
     return OrderIntent(
         client_order_id="ORDER:S6-002:1",
         trace_id="TRACE:S6-002:1",
         source_decision_id="DECISION:S6-002:BAR0",
         instrument_id=INSTRUMENT_ID,
         venue_id=VENUE_ID,
-        side=OrderSide.BUY,
+        side=side,
         order_type=OrderType.MARKET,
         quantity=quantity,
         submitted_at=submitted_at,
@@ -102,6 +112,68 @@ def test_cost_replay_full_fill_has_explicit_deterministic_attribution() -> None:
     assert result.total_cost == result.fee_cost + result.spread_cost + result.slippage_cost
     assert result.cost_model_id == model.cost_model_id
     assert result.cost_model_hash == model.cost_model_hash
+
+
+def _rebuild_malformed_result(candidate: ReplayOrderResult) -> None:
+    result_id = build_replay_order_result_id(result=candidate)
+    ReplayOrderResult(
+        **candidate.model_dump(exclude={"replay_order_result_id"}),
+        replay_order_result_id=result_id,
+    )
+
+
+def test_malformed_total_cost_is_rejected_even_with_rebuilt_id() -> None:
+    bars = (_bar(0), _bar(1))
+    good = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-002-MALFORMED",
+        execution_cost_model=_cost_model(),
+    ).results[0]
+    malformed = ReplayOrderResult.model_construct(
+        **good.model_dump(exclude={"replay_order_result_id", "total_cost"}),
+        replay_order_result_id="REPLAYORDER:MALFORMED",
+        total_cost=good.total_cost + Decimal("1"),
+    )
+
+    with pytest.raises(ValidationError, match="total_cost"):
+        _rebuild_malformed_result(malformed)
+
+
+def test_malformed_reference_notional_is_rejected_even_with_rebuilt_id() -> None:
+    bars = (_bar(0), _bar(1))
+    good = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-002-MALFORMED",
+        execution_cost_model=_cost_model(),
+    ).results[0]
+    malformed = ReplayOrderResult.model_construct(
+        **good.model_dump(exclude={"replay_order_result_id", "reference_notional"}),
+        replay_order_result_id="REPLAYORDER:MALFORMED",
+        reference_notional=good.reference_notional + Decimal("1"),
+    )
+
+    with pytest.raises(ValidationError, match="reference_notional"):
+        _rebuild_malformed_result(malformed)
+
+
+def test_cost_model_identity_hash_pairing_is_required() -> None:
+    bars = (_bar(0), _bar(1))
+    good = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(_intent(submitted_at=bars[0].close_ts),),
+        run_id="REPLAY:S6-002-MALFORMED",
+        execution_cost_model=_cost_model(),
+    ).results[0]
+    malformed = ReplayOrderResult.model_construct(
+        **good.model_dump(exclude={"replay_order_result_id", "cost_model_hash"}),
+        replay_order_result_id="REPLAYORDER:MALFORMED",
+        cost_model_hash=None,
+    )
+
+    with pytest.raises(ValidationError, match="cost_model_id and cost_model_hash"):
+        _rebuild_malformed_result(malformed)
 
 
 def test_partial_fill_caps_quantity_by_bar_participation() -> None:
@@ -197,6 +269,28 @@ def test_higher_stress_costs_worsen_effective_execution_and_total_cost() -> None
     assert low.fill_price is not None
     assert high.fill_price > low.fill_price
     assert high.replay_order_result_id != low.replay_order_result_id
+
+
+def test_sell_side_higher_stress_costs_lower_effective_price_and_raise_cost() -> None:
+    bars = (_bar(0), _bar(1))
+    intent = _intent(submitted_at=bars[0].close_ts, side=OrderSide.SELL)
+    low = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(intent,),
+        run_id="REPLAY:S6-002-SELL-STRESS",
+        execution_cost_model=_cost_model(spread_bps=Decimal("1"), slippage_bps=Decimal("1")),
+    ).results[0]
+    high = replay_ohlctv_market_orders(
+        bars=bars,
+        order_intents=(intent,),
+        run_id="REPLAY:S6-002-SELL-STRESS",
+        execution_cost_model=_cost_model(spread_bps=Decimal("20"), slippage_bps=Decimal("30")),
+    ).results[0]
+
+    assert high.total_cost > low.total_cost
+    assert high.fill_price is not None
+    assert low.fill_price is not None
+    assert high.fill_price < low.fill_price
 
 
 def test_cost_model_ids_and_replay_hashes_are_deterministic() -> None:
