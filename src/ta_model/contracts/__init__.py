@@ -47,6 +47,14 @@ from ta_model.contracts.market_data import (
     TradeRecord,
     TradeSide,
 )
+from ta_model.contracts.simulation import (
+    OrderIntent,
+    OrderSide,
+    ReplayFillStatus,
+    ReplayOrderResult,
+    ReplayRejectReason,
+    ReplayReport,
+)
 from ta_model.contracts.stream_health import (
     DataHealthGate,
     DataHealthGatePolicy,
@@ -113,12 +121,18 @@ __all__ = [
     "MarketDataKind",
     "OHLCTVBar",
     "OrderType",
+    "OrderIntent",
+    "OrderSide",
     "QualityFlag",
     "RateLimit",
     "RateLimitScope",
     "RateLimitState",
     "RawPayloadReference",
     "RetryState",
+    "ReplayFillStatus",
+    "ReplayOrderResult",
+    "ReplayRejectReason",
+    "ReplayReport",
     "SourceApproval",
     "SourceId",
     "TradingPermission",
