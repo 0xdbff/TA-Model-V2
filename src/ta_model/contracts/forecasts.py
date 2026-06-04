@@ -113,6 +113,16 @@ class Forecast(ContractModel):
             training_run_hash=self.training_run_hash
         ):
             raise ValueError("training_run_id must match training_run_hash")
+        candidate_name = self.calibration_metadata.get("candidate_name")
+        if candidate_name is None:
+            raise ValueError("calibration_metadata requires candidate_name")
+        expected_model_version_hash = build_model_version_hash(
+            training_run_id=self.training_run_id,
+            training_run_hash=self.training_run_hash,
+            candidate_name=candidate_name,
+        )
+        if self.model_version_hash != expected_model_version_hash:
+            raise ValueError("model_version_hash must match training run and candidate")
         if self.model_version_id != build_model_version_id(
             model_version_hash=self.model_version_hash
         ):

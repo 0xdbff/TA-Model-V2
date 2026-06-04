@@ -22,6 +22,7 @@ from ta_model.contracts.forecasts import (
     ForecastQuantile,
     ProbabilisticCandidateOutput,
     build_forecast_id,
+    build_model_version_id,
     build_probabilistic_output_hash,
     build_probabilistic_output_id,
 )
@@ -263,7 +264,12 @@ def test_forecast_lineage_hash_conflicts_are_rejected_even_with_rebuilt_id() -> 
         calibration_status=payload["calibration_status"],
         calibration_metadata=payload["calibration_metadata"],
     )
-    malformed_forecast = Forecast(**payload)
+    with pytest.raises(
+        ValidationError, match="model_version_hash must match training run and candidate"
+    ):
+        Forecast(**payload)
+
+    malformed_forecast = Forecast.model_construct(**(payload | {"quantiles": forecast.quantiles}))
     output = _candidate_output()
     output_payload = output.model_dump() | {"forecasts": (malformed_forecast,)}
     output_payload["forecast_ids"] = (malformed_forecast.forecast_id,)
@@ -279,7 +285,9 @@ def test_forecast_lineage_hash_conflicts_are_rejected_even_with_rebuilt_id() -> 
     output_payload["output_id"] = build_probabilistic_output_id(
         output_hash=output_payload["output_hash"]
     )
-    with pytest.raises(ValidationError, match="forecast training_run_id must match output"):
+    with pytest.raises(
+        ValidationError, match="model_version_hash must match training run and candidate"
+    ):
         ProbabilisticCandidateOutput(**output_payload)
 
 
@@ -304,6 +312,56 @@ def test_output_rejects_empty_and_nested_hash_conflicts_with_rebuilt_hash() -> N
     payload["output_id"] = build_probabilistic_output_id(output_hash=payload["output_hash"])
     with pytest.raises(ValidationError, match="forecast training_run_hash must match output"):
         ProbabilisticCandidateOutput(**payload)
+
+
+def test_arbitrary_model_version_hash_fails_even_when_ids_are_rebuilt() -> None:
+    output = _candidate_output()
+    forecast = output.forecasts[0]
+    arbitrary_model_version_hash = "3" * 64
+    arbitrary_model_version_id = build_model_version_id(
+        model_version_hash=arbitrary_model_version_hash
+    )
+    forecast_payload = forecast.model_dump() | {
+        "model_version_hash": arbitrary_model_version_hash,
+        "model_version_id": arbitrary_model_version_id,
+    }
+    forecast_payload["forecast_id"] = build_forecast_id(
+        dataset_snapshot_id=forecast_payload["dataset_snapshot_id"],
+        dataset_hash=forecast_payload["dataset_hash"],
+        dataset_row_id=forecast_payload["dataset_row_id"],
+        split=forecast_payload["split"],
+        training_run_id=forecast_payload["training_run_id"],
+        training_run_hash=forecast_payload["training_run_hash"],
+        model_version_id=forecast_payload["model_version_id"],
+        model_version_hash=forecast_payload["model_version_hash"],
+        probabilities=forecast_payload["probabilities"],
+        quantiles=forecast.quantiles,
+        uncertainty=forecast_payload["uncertainty"],
+        calibration_status=forecast_payload["calibration_status"],
+        calibration_metadata=forecast_payload["calibration_metadata"],
+    )
+    output_payload = output.model_dump() | {
+        "model_version_hash": arbitrary_model_version_hash,
+        "model_version_id": arbitrary_model_version_id,
+        "forecast_ids": (forecast_payload["forecast_id"],),
+    }
+    output_payload["output_hash"] = build_probabilistic_output_hash(
+        dataset_snapshot_id=output_payload["dataset_snapshot_id"],
+        dataset_hash=output_payload["dataset_hash"],
+        training_run_id=output_payload["training_run_id"],
+        training_run_hash=output_payload["training_run_hash"],
+        model_version_id=output_payload["model_version_id"],
+        model_version_hash=output_payload["model_version_hash"],
+        forecasts=(forecast,),
+    )
+    output_payload["output_id"] = build_probabilistic_output_id(
+        output_hash=output_payload["output_hash"]
+    )
+
+    with pytest.raises(
+        ValidationError, match="model_version_hash must match training run and candidate"
+    ):
+        Forecast(**forecast_payload)
 
 
 def test_out_of_sample_split_enforcement() -> None:

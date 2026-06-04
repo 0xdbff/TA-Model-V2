@@ -16,8 +16,8 @@
 ## Acceptance evidence
 
 1. Added strict/frozen Pydantic forecast contracts in `src/ta_model/contracts/forecasts.py`.
-   - Rejects invalid probability sums/ranges, non-monotonic quantiles, non-finite uncertainty, in-sample train forecasts, missing calibration status, empty output artifacts, mismatched nested output lineage, and ID/hash lineage conflicts.
-   - Forecast identity binds dataset snapshot/hash, training run ID/hash, model version ID/hash, row ID, probabilities, quantiles, uncertainty, and calibration metadata.
+   - Rejects invalid probability sums/ranges, non-monotonic quantiles, non-finite uncertainty, in-sample train forecasts, missing calibration status/candidate identity, empty output artifacts, mismatched nested output lineage, and ID/hash lineage conflicts.
+   - Forecast identity binds dataset snapshot/hash, training run ID/hash, model version ID/hash, row ID, probabilities, quantiles, uncertainty, and calibration metadata. Model-version hash must derive from training run ID/hash plus `calibration_metadata["candidate_name"]`.
 2. Added deterministic candidate trainer/scorer in `src/ta_model/training/probabilistic_candidate.py`.
    - Fits probabilities, quantiles, and uncertainty from train-split labels only, conditioned by point-in-time `one_bar_return` feature sequences.
    - Scores configured out-of-sample splits from feature sequences available at or before each row `feature_ts` and S7-001 `TrainingRunResult` lineage.
@@ -40,8 +40,8 @@
 
 - `uv run ruff check .` — PASS.
 - `uv run mypy src tests` — PASS.
-- `uv run pytest tests/test_training_runner.py tests/test_probabilistic_candidate.py tests/test_dataset_snapshot_builder.py tests/test_s4_leakage_parity.py` — PASS, 32 tests.
-- `uv run pytest` — PASS, 227 tests.
+- `uv run pytest tests/test_training_runner.py tests/test_probabilistic_candidate.py tests/test_dataset_snapshot_builder.py tests/test_s4_leakage_parity.py` — PASS, 33 tests.
+- `uv run pytest` — PASS, 230 tests.
 
 ## Assumptions and downstream notes
 
