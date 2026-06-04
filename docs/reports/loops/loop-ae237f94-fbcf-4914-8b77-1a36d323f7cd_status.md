@@ -34,8 +34,8 @@ Hard guardrails: MVP paper-trading validation only; spot/liquid instruments only
 |---|---|---:|---|
 | #27 | S6-001 | PR #90 merged to loop | Event-time replay foundation added with same-bar prevention, late-source fail-closed guard, global event-time ordering, mixed-timeframe ambiguity guard, explicit unfilled path, deterministic replay report, and S6-001 evidence report. |
 | #28 | S6-002 | PR #91 merged to loop | Execution cost model added with fees, spread/slippage, latency, participation-capped partial fills, explicit unfilled liquidity paths, deterministic cost attribution, buy/sell stress tests, bounded fee validation, and S6-002 evidence report. |
-| #29 | S6-003 | Open, unblocked by #27/#28 foundation | Must enforce venue constraints plus cash/inventory accounting with rejection evidence. |
-| #30 | S6-004 | Open, depends on #29 for full scenario evidence | Must add deterministic synthetic scenarios covering random-walk, trend, crash, spread, liquidity, and outage cases. |
+| #29 | S6-003 | PR #92 merged to loop | Venue/instrument/account checks, fill-attempt-time constraints, simulated cash/inventory balances, no-shorting enforcement, deterministic rejection accounting, and S6-003 evidence report added. |
+| #30 | S6-004 | Open, unblocked by #27/#28/#29 simulator path | Must add deterministic synthetic scenarios covering random-walk, trend, crash, spread, liquidity, and outage cases. |
 
 ## Dependencies and sequencing
 
@@ -50,8 +50,8 @@ Hard guardrails: MVP paper-trading validation only; spot/liquid instruments only
 |---|---|---|---|---|---|---|
 | #27 | S6-001 | `agent/27-S6-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-27-S6-001-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | [#90](https://github.com/0xdbff/TA-Model-V2/pull/90) merged | Completed after QA-requested late-source, global event-time ordering, mixed-timeframe, and duplicate-order fail-closed fixes. |
 | #28 | S6-002 | `agent/28-S6-002` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-28-S6-002-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | [#91](https://github.com/0xdbff/TA-Model-V2/pull/91) merged | Completed after QA-requested cost-attribution contract validation, public exports, bounded fee config, and sell-side stress coverage. |
-| #29 | S6-003 | `agent/29-S6-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-29-S6-003-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | pending | Worktree created before #28 merge; must rebase/reset to loop commit `0fc73de` or newer before implementation. |
-| #30 | S6-004 | `agent/30-S6-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-30-S6-004-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl / QA | pending | Pending simulator behavior; scenario contract planning allowed. |
+| #29 | S6-003 | `agent/29-S6-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-29-S6-003-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | [#92](https://github.com/0xdbff/TA-Model-V2/pull/92) merged | Completed after QA-requested fill-attempt-time constraint selection, rejection-count contract validation, and account/order-type/tick/lot coverage. |
+| #30 | S6-004 | `agent/30-S6-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-30-S6-004-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl / QA | pending | Pending worktree creation from loop commit `5234c9a` or newer. |
 
 ## Validation plan
 
@@ -78,6 +78,8 @@ Additional focused checks expected:
 - #27 review also required global event-time sorting rather than stream-grouped sorting, a mixed-timeframe ambiguity guard, and duplicate client order ID coverage before merge.
 - #28 initial review found a blocking contract-integrity gap: malformed cost attribution could be accepted if deterministic IDs were rebuilt. Fixed before merge with total-cost/notional/cost-model pairing validators and malformed-payload regression tests.
 - #28 review also required public cost-model exports, scope-doc correction, bounded fee rates, sell-side stress coverage, and regression tests for fee-bound/public-export behavior before merge.
+- #29 initial review found blocking gaps in effective-dated constraint selection and rejection accounting: constraints used submission time instead of fill-attempt event time, and report rejection counts could be inconsistent if hashes were rebuilt. Fixed before merge with fill-attempt-time selection, non-zero/exact rejection-count validation, and rollover/malformed-report tests.
+- #29 review also required account-not-tradable, unsupported metadata order type, tick-size, and lot-size tests before merge.
 - Simulator must not become a paper-only or research-only divergent path. Contracts must preserve the future shared gateway/order lifecycle direction.
 - Mocks are acceptable for deterministic fixtures only; they cannot replace production-path service wiring or hide missing simulator integration.
 - S6 is pre-risk-engine implementation, but work must not bypass or weaken future independent risk controls. Forced breach orders reaching a gateway remain stop-the-line by rule.
@@ -95,6 +97,9 @@ Additional focused checks expected:
 - #28 PR #91 pre-merge validation in sub-agent worktree after QA fixes/polish: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 181 tests.
 - Independent QA re-review approved #28 after contract-integrity fixes; remaining nits were closed with fee-bound and public-export regression tests before merge.
 - Loop validation after #28 merge: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 181 tests.
+- #29 PR #92 pre-merge validation in sub-agent worktree after QA fixes: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 197 tests.
+- Independent QA re-review approved #29 after fill-attempt constraint and rejection-accounting fixes.
+- Loop validation after #29 merge: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 197 tests.
 
 ## Human-sync decisions
 
@@ -102,6 +107,5 @@ None yet.
 
 ## Remaining blockers
 
-- #29 is unblocked by the #27/#28 replay and cost foundation and must start from loop commit `0fc73de` or newer.
-- #30 should wait for #29 constraint/cash behavior before claiming full scenario evidence, though scenario planning can proceed.
+- #30 is unblocked by the integrated simulator path and must start from loop commit `5234c9a` or newer.
 - Final integration PR is not ready.
