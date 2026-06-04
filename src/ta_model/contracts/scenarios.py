@@ -61,6 +61,11 @@ class SyntheticScenarioResult(ContractModel):
     final_balances: tuple[tuple[CanonicalId, Decimal], ...] = ()
     comparison_total_cost: Decimal | None = Field(default=None, ge=Decimal("0"))
 
+    @model_validator(mode="after")
+    def traceability_matches_required_scenario_evidence(self) -> SyntheticScenarioResult:
+        _validate_result_traceability(self)
+        return self
+
     @classmethod
     def from_replay_report(
         cls,
@@ -126,6 +131,9 @@ class SyntheticScenarioSuiteReport(ContractModel):
 
     @model_validator(mode="after")
     def suite_identity_is_deterministic(self) -> SyntheticScenarioSuiteReport:
+        _validate_required_scenarios(self.scenario_results)
+        for result in self.scenario_results:
+            _validate_result_traceability(result)
         expected_hash = build_synthetic_scenario_suite_hash(
             run_id=self.run_id,
             seed=self.seed,
@@ -193,3 +201,40 @@ def build_synthetic_scenario_suite_id(*, suite_hash: str) -> str:
         )
     ).hexdigest()[:32]
     return f"SYNTHSUITE:{digest.upper()}"
+
+
+def _validate_required_scenarios(results: tuple[SyntheticScenarioResult, ...]) -> None:
+    expected = tuple(SyntheticScenarioId)
+    actual = tuple(result.scenario_id for result in results)
+    if actual != expected:
+        raise ValueError(
+            "scenario_results must contain each required scenario exactly once in order"
+        )
+
+
+def _validate_result_traceability(result: SyntheticScenarioResult) -> None:
+    traceability = set(result.traceability)
+    labels = set(result.stress_labels)
+    if "FR-012" not in traceability:
+        raise ValueError("synthetic scenario result traceability must include FR-012")
+
+    if result.scenario_id is SyntheticScenarioId.CRASH:
+        if "RISK-001" not in traceability or labels.isdisjoint(
+            {"market_drawdown", "drawdown_stress", "market_stress"}
+        ):
+            raise ValueError("crash scenario must include RISK-001 market drawdown evidence")
+    if result.scenario_id is SyntheticScenarioId.SPREAD:
+        if "RISK-002" not in traceability or "RISK-005" not in traceability:
+            raise ValueError("spread scenario must include RISK-002 and RISK-005 traceability")
+        if labels.isdisjoint({"cost_sensitivity", "liquidity_cost_stress"}):
+            raise ValueError("spread scenario must include cost-sensitivity evidence")
+    if result.scenario_id is SyntheticScenarioId.LIQUIDITY:
+        if "RISK-002" not in traceability or labels.isdisjoint(
+            {"liquidity_collapse", "insufficient_liquidity"}
+        ):
+            raise ValueError("liquidity scenario must include RISK-002 liquidity evidence")
+    if result.scenario_id is SyntheticScenarioId.OUTAGE:
+        if "RISK-002" not in traceability or labels.isdisjoint(
+            {"fail_closed", "venue_outage"}
+        ):
+            raise ValueError("outage scenario must include RISK-002 fail-closed evidence")

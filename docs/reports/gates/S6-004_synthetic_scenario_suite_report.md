@@ -7,12 +7,13 @@ Docker/runtime impact: none; stdlib-only fake/local scenario module, no new serv
 
 ## Evidence artifact
 
-- Suite ID: `SYNTHSUITE:0128C87BBFD63B655AA1696D5F340344`
-- Suite hash: `4c97aa83e1e29b5b12abeb7a99e7088827ec9870796ff3fc0c94a5a10910f591`
+- Suite ID: `SYNTHSUITE:3868297592E10807461155B2A4A83F47`
+- Suite hash: `7d75deb9542de866131e4c97dfcab6bf4a60288695d686abd6c1cea766e1a5ca`
 - Seed: `6004`
 - Run ID: `SYNTHETIC:S6-004:SUITE`
 - Generator: `ta_model.simulation.scenarios.run_synthetic_scenario_suite`
 - Simulator path: every scenario calls `replay_ohlctv_market_orders`; no mocked pass/fail summaries.
+- Contract gate: `scenario_results` must contain each required scenario exactly once in deterministic order, and required FR/risk/label traceability is validated at result and suite levels.
 
 ## Scenario matrix
 
@@ -27,10 +28,10 @@ Docker/runtime impact: none; stdlib-only fake/local scenario module, no new serv
 
 ## Validation commands
 
-- `uv run pytest tests/test_synthetic_scenarios.py` — 9 passed.
+- `uv run pytest tests/test_synthetic_scenarios.py` — 14 passed.
 - `uv run ruff check .` — passed.
 - `uv run mypy src tests` — passed.
-- `uv run pytest` — 206 passed.
+- `uv run pytest` — 211 passed.
 
 ## Anti-drift notes
 

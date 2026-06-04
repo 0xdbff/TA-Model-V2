@@ -236,7 +236,7 @@ def _run_outage() -> SyntheticScenarioResult:
     )
     return _summary(
         scenario_id=SyntheticScenarioId.OUTAGE,
-        name="Venue outage fail-closed rejection with no future eligible event",
+        name="Venue outage fail-closed rejection through venue-not-tradable accounting",
         traceability=("FR-012", "RISK-002"),
         labels=("fake_data", "venue_outage", "fail_closed", "RISK-002"),
         bars=bars,
