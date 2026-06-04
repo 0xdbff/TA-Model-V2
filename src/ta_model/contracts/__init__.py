@@ -53,8 +53,11 @@ from ta_model.contracts.simulation import (
     OrderSide,
     ReplayFillStatus,
     ReplayOrderResult,
+    ReplayRejectionCount,
     ReplayRejectReason,
     ReplayReport,
+    SimulatedAccountState,
+    SimulatedBalance,
     make_execution_cost_model,
 )
 from ta_model.contracts.stream_health import (
@@ -135,7 +138,10 @@ __all__ = [
     "ReplayFillStatus",
     "ReplayOrderResult",
     "ReplayRejectReason",
+    "ReplayRejectionCount",
     "ReplayReport",
+    "SimulatedAccountState",
+    "SimulatedBalance",
     "make_execution_cost_model",
     "SourceApproval",
     "SourceId",

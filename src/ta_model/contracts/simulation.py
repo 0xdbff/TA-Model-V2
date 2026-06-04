@@ -1,6 +1,10 @@
 """Simulation and event-time replay contracts.
 
 Traceability:
+- FR-003: replay can consume canonical venue/instrument/account constraints for
+  deterministic simulator feasibility checks.
+- FR-010: simulator rejects infeasible orders fail-closed without claiming the
+  future independent S9 risk engine.
 - FR-012: historical replay consumes validated market data by event-time availability
   and can attribute fees, spread, slippage, latency, partial fills, and failed fills.
 - NFR-001: replay prohibits same-bar/lookahead fills and records deterministic evidence.
@@ -30,6 +34,7 @@ from ta_model.contracts.instrument_master import (
     CanonicalId,
     ContractModel,
     NonEmptyString,
+    NonNegativeDecimal,
     OrderType,
     PositiveDecimal,
 )
@@ -57,6 +62,47 @@ class ReplayRejectReason(StrEnum):
     UNSUPPORTED_ORDER_TYPE = "unsupported_order_type"
     NO_FUTURE_ELIGIBLE_EVENT = "no_future_eligible_event"
     INSUFFICIENT_LIQUIDITY = "insufficient_liquidity"
+    VENUE_NOT_TRADABLE = "venue_not_tradable"
+    INSTRUMENT_NOT_TRADABLE = "instrument_not_tradable"
+    ACCOUNT_NOT_TRADABLE = "account_not_tradable"
+    CONSTRAINT_VIOLATION = "constraint_violation"
+    INSUFFICIENT_CASH = "insufficient_cash"
+    INSUFFICIENT_INVENTORY = "insufficient_inventory"
+
+
+class SimulatedBalance(ContractModel):
+    """Non-negative simulated spot balance for one asset/account/venue."""
+
+    account_id: CanonicalId
+    venue_id: CanonicalId
+    asset_id: CanonicalId
+    available: NonNegativeDecimal
+
+
+class SimulatedAccountState(ContractModel):
+    """Deterministic simulated account state; not live capital or a gateway."""
+
+    account_id: CanonicalId
+    balances: tuple[SimulatedBalance, ...]
+
+    @model_validator(mode="after")
+    def balances_are_unique_and_match_account(self) -> Self:
+        seen: set[tuple[str, str]] = set()
+        for balance in self.balances:
+            if balance.account_id != self.account_id:
+                raise ValueError("balance account_id must match simulated account state")
+            key = (balance.venue_id, balance.asset_id)
+            if key in seen:
+                raise ValueError("duplicate simulated balance for venue_id/asset_id")
+            seen.add(key)
+        return self
+
+
+class ReplayRejectionCount(ContractModel):
+    """Deterministic rejection accounting by machine-readable reason."""
+
+    reason: ReplayRejectReason
+    count: int = Field(ge=0)
 
 
 class ExecutionCostModel(ContractModel):
@@ -242,6 +288,8 @@ class ReplayReport(ContractModel):
     result_ids: tuple[CanonicalId, ...]
     results: tuple[ReplayOrderResult, ...]
     requirement_ids: tuple[NonEmptyString, ...] = ("FR-012", "NFR-001")
+    rejection_counts: tuple[ReplayRejectionCount, ...] = ()
+    final_account_state: SimulatedAccountState | None = None
 
     @model_validator(mode="after")
     def report_identity_is_deterministic(self) -> Self:
@@ -252,6 +300,8 @@ class ReplayReport(ContractModel):
             market_data_hash=self.market_data_hash,
             results=self.results,
             requirement_ids=self.requirement_ids,
+            rejection_counts=self.rejection_counts,
+            final_account_state=self.final_account_state,
         )
         if self.replay_report_hash != expected_hash:
             raise ValueError("replay_report_hash is not deterministic")
@@ -350,10 +400,16 @@ def build_replay_report_hash(
     market_data_hash: str,
     results: tuple[ReplayOrderResult, ...],
     requirement_ids: tuple[str, ...],
+    rejection_counts: tuple[ReplayRejectionCount, ...] = (),
+    final_account_state: SimulatedAccountState | None = None,
 ) -> str:
     return _hash(
         {
+            "final_account_state": (
+                _model_json(final_account_state) if final_account_state is not None else None
+            ),
             "market_data_hash": market_data_hash,
+            "rejection_counts": tuple(_model_json(count) for count in rejection_counts),
             "requirement_ids": requirement_ids,
             "results": tuple(_model_json(result) for result in results),
             "run_id": run_id,
