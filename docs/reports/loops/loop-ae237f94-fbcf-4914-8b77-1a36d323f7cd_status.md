@@ -35,7 +35,7 @@ Hard guardrails: MVP paper-trading validation only; spot/liquid instruments only
 | #27 | S6-001 | PR #90 merged to loop | Event-time replay foundation added with same-bar prevention, late-source fail-closed guard, global event-time ordering, mixed-timeframe ambiguity guard, explicit unfilled path, deterministic replay report, and S6-001 evidence report. |
 | #28 | S6-002 | PR #91 merged to loop | Execution cost model added with fees, spread/slippage, latency, participation-capped partial fills, explicit unfilled liquidity paths, deterministic cost attribution, buy/sell stress tests, bounded fee validation, and S6-002 evidence report. |
 | #29 | S6-003 | PR #92 merged to loop | Venue/instrument/account checks, fill-attempt-time constraints, simulated cash/inventory balances, no-shorting enforcement, deterministic rejection accounting, and S6-003 evidence report added. |
-| #30 | S6-004 | Open, unblocked by #27/#28/#29 simulator path | Must add deterministic synthetic scenarios covering random-walk, trend, crash, spread, liquidity, and outage cases. |
+| #30 | S6-004 | PR #93 merged to loop | Deterministic fake/local scenario suite added for random-walk, trend, crash, spread, liquidity, and outage cases with integrated replay execution, risk trace validation, deterministic suite hash, and S6-004 evidence report. |
 
 ## Dependencies and sequencing
 
@@ -51,7 +51,7 @@ Hard guardrails: MVP paper-trading validation only; spot/liquid instruments only
 | #27 | S6-001 | `agent/27-S6-001` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-27-S6-001-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | [#90](https://github.com/0xdbff/TA-Model-V2/pull/90) merged | Completed after QA-requested late-source, global event-time ordering, mixed-timeframe, and duplicate-order fail-closed fixes. |
 | #28 | S6-002 | `agent/28-S6-002` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-28-S6-002-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | [#91](https://github.com/0xdbff/TA-Model-V2/pull/91) merged | Completed after QA-requested cost-attribution contract validation, public exports, bounded fee config, and sell-side stress coverage. |
 | #29 | S6-003 | `agent/29-S6-003` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-29-S6-003-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl | [#92](https://github.com/0xdbff/TA-Model-V2/pull/92) merged | Completed after QA-requested fill-attempt-time constraint selection, rejection-count contract validation, and account/order-type/tick/lot coverage. |
-| #30 | S6-004 | `agent/30-S6-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-30-S6-004-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl / QA | pending | Pending worktree creation from loop commit `5234c9a` or newer. |
+| #30 | S6-004 | `agent/30-S6-004` | `/Users/db/dev/TA-Model-v2/TA-Model-V2-30-S6-004-ae237f94-fbcf-4914-8b77-1a36d323f7cd` | backend-impl / QA | [#93](https://github.com/0xdbff/TA-Model-V2/pull/93) merged | Completed after QA-requested exact required-scenario validation, per-scenario risk/label traceability validation, suite-level traceability validation, and outage evidence text correction. |
 
 ## Validation plan
 
@@ -80,6 +80,7 @@ Additional focused checks expected:
 - #28 review also required public cost-model exports, scope-doc correction, bounded fee rates, sell-side stress coverage, and regression tests for fee-bound/public-export behavior before merge.
 - #29 initial review found blocking gaps in effective-dated constraint selection and rejection accounting: constraints used submission time instead of fill-attempt event time, and report rejection counts could be inconsistent if hashes were rebuilt. Fixed before merge with fill-attempt-time selection, non-zero/exact rejection-count validation, and rollover/malformed-report tests.
 - #29 review also required account-not-tradable, unsupported metadata order type, tick-size, and lot-size tests before merge.
+- #30 initial review found a blocking evidence-integrity gap: scenario suite reports could omit or duplicate required scenarios, or drop required risk labels, if hashes were rebuilt. Fixed before merge with exact scenario-set validation, per-scenario FR/risk/label validation, suite-level traceability validation, and regression tests.
 - Simulator must not become a paper-only or research-only divergent path. Contracts must preserve the future shared gateway/order lifecycle direction.
 - Mocks are acceptable for deterministic fixtures only; they cannot replace production-path service wiring or hide missing simulator integration.
 - S6 is pre-risk-engine implementation, but work must not bypass or weaken future independent risk controls. Forced breach orders reaching a gateway remain stop-the-line by rule.
@@ -100,6 +101,9 @@ Additional focused checks expected:
 - #29 PR #92 pre-merge validation in sub-agent worktree after QA fixes: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 197 tests.
 - Independent QA re-review approved #29 after fill-attempt constraint and rejection-accounting fixes.
 - Loop validation after #29 merge: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 197 tests.
+- #30 PR #93 pre-merge validation in sub-agent worktree after QA fixes/polish: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 213 tests.
+- Independent QA re-reviews approved #30 after required-scenario and traceability contract hardening.
+- Loop validation after #30 merge: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 213 tests.
 
 ## Human-sync decisions
 
@@ -107,5 +111,5 @@ None yet.
 
 ## Remaining blockers
 
-- #30 is unblocked by the integrated simulator path and must start from loop commit `5234c9a` or newer.
-- Final integration PR is not ready.
+- No S6 sub-agent blockers remain.
+- Final integrated validation and Docker/runtime checks remain before final PR readiness.
