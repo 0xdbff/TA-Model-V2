@@ -105,6 +105,15 @@ from ta_model.contracts.streaming import (
     StreamSubscription,
     TradeEvent,
 )
+from ta_model.contracts.training import (
+    TrainerKind,
+    TrainingArtifactReference,
+    TrainingConfig,
+    TrainingMetric,
+    TrainingRunResult,
+    TrainingRunStatus,
+    build_training_config,
+)
 
 __all__ = [
     "Account",
@@ -152,6 +161,7 @@ __all__ = [
     "SimulatedAccountState",
     "SimulatedBalance",
     "build_rejection_counts",
+    "build_training_config",
     "make_execution_cost_model",
     "make_synthetic_scenario_suite_report",
     "SourceApproval",
@@ -164,6 +174,12 @@ __all__ = [
     "TradingSessionStatus",
     "TradeRecord",
     "TradeSide",
+    "TrainerKind",
+    "TrainingArtifactReference",
+    "TrainingConfig",
+    "TrainingMetric",
+    "TrainingRunResult",
+    "TrainingRunStatus",
     "Venue",
     "VenueStatus",
     "VenueType",
