@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from decimal import Decimal
 from enum import StrEnum
 from typing import Self
@@ -22,6 +23,8 @@ from pydantic import Field, field_validator, model_validator
 
 from ta_model.contracts.datasets import DatasetSplit
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
+
+_GIT_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 class TrainerKind(StrEnum):
@@ -57,6 +60,8 @@ class TrainingConfig(ContractModel):
             raise ValueError("at least one evaluation split is required")
         if len(set(self.evaluation_splits)) != len(self.evaluation_splits):
             raise ValueError("evaluation_splits must be unique")
+        if self.train_split in self.evaluation_splits:
+            raise ValueError("evaluation_splits must not include train_split")
         expected_hash = build_training_config_hash(
             name=self.name,
             trainer_kind=self.trainer_kind,
@@ -110,6 +115,11 @@ class TrainingRunResult(ContractModel):
     status: TrainingRunStatus = TrainingRunStatus.RUNNER_EVIDENCE_ONLY
     metrics: tuple[TrainingMetric, ...]
     artifacts: tuple[TrainingArtifactReference, ...]
+
+    @field_validator("code_commit")
+    @classmethod
+    def code_commit_is_git_sha_like(cls, value: str) -> str:
+        return validate_code_commit(value)
 
     @model_validator(mode="after")
     def result_identity_is_deterministic(self) -> Self:
@@ -237,6 +247,17 @@ def build_training_run_hash(
 
 def build_training_run_id(*, training_run_hash: str) -> str:
     return _stable_id("TRAINRUN", {"training_run_hash": training_run_hash})
+
+
+def validate_code_commit(value: str) -> str:
+    """Validate and normalize practical git SHA forms used for run lineage."""
+
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError("code_commit is required")
+    if not _GIT_COMMIT_RE.fullmatch(normalized):
+        raise ValueError("code_commit must be a git SHA-like hex string of 7 to 40 chars")
+    return normalized
 
 
 def _stable_id(prefix: str, payload: object) -> str:

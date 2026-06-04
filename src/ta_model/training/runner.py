@@ -21,6 +21,7 @@ from ta_model.contracts.training import (
     build_training_artifact_reference,
     build_training_run_hash,
     build_training_run_id,
+    validate_code_commit,
 )
 
 
@@ -38,7 +39,9 @@ def run_training(
     explicitly marked as non-promotable runner evidence.
     """
 
-    _validate_prerequisites(snapshot=snapshot, config=config, code_commit=code_commit)
+    code_commit = _validate_prerequisites(
+        snapshot=snapshot, config=config, code_commit=code_commit
+    )
     if config.trainer_kind is not TrainerKind.REFERENCE_MEAN_LABEL:
         raise TrainingRunnerError(f"unsupported trainer_kind: {config.trainer_kind}")
 
@@ -72,9 +75,11 @@ def run_training(
 
 def _validate_prerequisites(
     *, snapshot: DatasetSnapshot, config: TrainingConfig, code_commit: str
-) -> None:
-    if not code_commit.strip():
-        raise TrainingRunnerError("code_commit is required")
+) -> str:
+    try:
+        normalized_code_commit = validate_code_commit(code_commit)
+    except ValueError as exc:
+        raise TrainingRunnerError(str(exc)) from exc
     expected_snapshot_id = build_dataset_snapshot_id(dataset_hash=snapshot.dataset_hash)
     if snapshot.dataset_snapshot_id != expected_snapshot_id:
         raise TrainingRunnerError("dataset_snapshot_id does not match dataset_hash")
@@ -91,6 +96,7 @@ def _validate_prerequisites(
     if not any(row.split is config.train_split for row in snapshot.rows):
         raise TrainingRunnerError("at least one train row is required")
     _validate_row_order(snapshot.rows)
+    return normalized_code_commit
 
 
 def _validate_row_order(rows: tuple[DatasetRow, ...]) -> None:

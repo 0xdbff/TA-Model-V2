@@ -219,6 +219,21 @@ def test_runner_fails_closed_for_invalid_prerequisites() -> None:
     with pytest.raises(TrainingRunnerError, match="code_commit is required"):
         run_training(snapshot=_snapshot(), config=config, code_commit=" ")
 
+    with pytest.raises(TrainingRunnerError, match="git SHA-like hex string"):
+        run_training(snapshot=_snapshot(), config=config, code_commit="not-a-sha")
+
+    with pytest.raises(TrainingRunnerError, match="git SHA-like hex string"):
+        run_training(snapshot=_snapshot(), config=config, code_commit="abcdef")
+
+
+def test_training_config_rejects_in_sample_evaluation_split() -> None:
+    with pytest.raises(ValidationError, match="evaluation_splits must not include train_split"):
+        build_training_config(
+            name="s7-001-reference",
+            seed=7,
+            evaluation_splits=(DatasetSplit.TRAIN, DatasetSplit.VALIDATION),
+        )
+
 
 def test_reconstructed_dataset_hash_mismatch_fails_closed() -> None:
     snapshot = _snapshot()
@@ -251,3 +266,6 @@ def test_contracts_reject_invalid_metrics_artifacts_and_run_identity() -> None:
 
     with pytest.raises(ValidationError, match="training_run_hash is not deterministic"):
         TrainingRunResult(**(result.model_dump() | {"training_run_hash": "0" * 64}))
+
+    with pytest.raises(ValidationError, match="git SHA-like hex string"):
+        TrainingRunResult(**(result.model_dump() | {"code_commit": "12345g7"}))

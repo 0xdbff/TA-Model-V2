@@ -13,8 +13,8 @@ Issue: #31 / S7-001
 
 - Implemented runner scaffolding only; no S7-002 candidate architecture, MLflow registry state, calibration/ablation report, paper/live routing, leverage, derivatives, live capital, online self-update, or auto-promotion.
 - Reference trainer is explicitly marked `runner_evidence_only` and is not a promotable model candidate.
-- Dataset labels remain outputs. The runner trains only from train-split labels and evaluates configured non-train splits after DatasetSnapshot point-in-time validation.
-- Fails closed for empty train split, empty evaluation split, missing code commit, duplicated/non-chronological rows, label timestamp violations, and reconstructed dataset hash/snapshot mismatches.
+- Dataset labels remain outputs. The runner trains only from train-split labels and evaluates configured non-train splits after DatasetSnapshot point-in-time validation; `evaluation_splits` cannot include `train_split`.
+- Fails closed for empty train split, empty evaluation split, missing/non-hex/too-short code commit SHA, duplicated/non-chronological rows, label timestamp violations, and reconstructed dataset hash/snapshot mismatches.
 
 ## Implementation evidence
 
@@ -29,7 +29,7 @@ Issue: #31 / S7-001
   - Deterministic rerun stability.
   - Identity changes for seed/config/dataset/commit.
   - Required lineage/artifact fields.
-  - Fail-closed invalid prerequisites and reconstructed dataset hash mismatch.
+  - Fail-closed invalid prerequisites, invalid git SHA-like commits, in-sample evaluation split config, and reconstructed dataset hash mismatch.
 
 ## Docker/runtime impact
 
@@ -41,8 +41,8 @@ Issue: #31 / S7-001
 
 - `uv run ruff check .` — passed (`All checks passed!`).
 - `uv run mypy src tests` — passed (`Success: no issues found in 57 source files`).
-- `uv run pytest tests/test_training_runner.py tests/test_dataset_snapshot_builder.py tests/test_deterministic_baselines.py tests/test_evaluation_scorecard.py` — passed (`47 passed in 0.31s`).
-- `uv run pytest` — passed (`221 passed in 2.42s`).
+- `uv run pytest tests/test_training_runner.py tests/test_dataset_snapshot_builder.py tests/test_deterministic_baselines.py tests/test_evaluation_scorecard.py` — passed (`48 passed in 0.25s`).
+- `uv run pytest` — passed (`222 passed in 0.90s`).
 
 ## Downstream notes
 
