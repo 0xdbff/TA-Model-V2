@@ -545,10 +545,18 @@ def _validate_bars_are_safe(bars: tuple[OHLCTVBar, ...]) -> None:
 
 def _validate_order_intents(order_intents: tuple[OrderIntent, ...]) -> None:
     seen_client_order_ids: set[str] = set()
+    previous_order_key: tuple[datetime, str] | None = None
     for intent in order_intents:
         if intent.client_order_id in seen_client_order_ids:
             raise ReplayBuildError("duplicate client_order_id in replay order intents")
         seen_client_order_ids.add(intent.client_order_id)
+
+        order_key = (intent.submitted_at, intent.client_order_id)
+        if previous_order_key is not None and order_key < previous_order_key:
+            raise ReplayBuildError(
+                "order intents must be sorted by submitted_at/client_order_id for causal replay"
+            )
+        previous_order_key = order_key
 
 
 def _market_data_hash(bars: tuple[OHLCTVBar, ...]) -> str:

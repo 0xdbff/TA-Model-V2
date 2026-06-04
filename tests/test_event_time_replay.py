@@ -54,9 +54,13 @@ def _bar(
     )
 
 
-def _intent(*, submitted_at: datetime = START + timedelta(minutes=1)) -> OrderIntent:
+def _intent(
+    *,
+    submitted_at: datetime = START + timedelta(minutes=1),
+    client_order_id: str = "ORDER:S6-001:1",
+) -> OrderIntent:
     return OrderIntent(
-        client_order_id="ORDER:S6-001:1",
+        client_order_id=client_order_id,
         trace_id="TRACE:S6-001:1",
         source_decision_id="DECISION:S6-001:BAR0",
         instrument_id=INSTRUMENT_ID,
@@ -193,6 +197,46 @@ def test_duplicate_client_order_id_fails_closed() -> None:
         replay_ohlctv_market_orders(
             bars=(_bar(0), _bar(1)),
             order_intents=(_intent(), duplicate),
+            run_id="REPLAY:S6-001",
+        )
+
+
+def test_non_monotonic_order_intent_submitted_at_fails_closed_before_replay() -> None:
+    bars = (_bar(0), _bar(1), _bar(2))
+
+    with pytest.raises(ReplayBuildError, match="submitted_at/client_order_id"):
+        replay_ohlctv_market_orders(
+            bars=bars,
+            order_intents=(
+                _intent(
+                    submitted_at=bars[1].close_ts,
+                    client_order_id="ORDER:S6-001:2",
+                ),
+                _intent(
+                    submitted_at=bars[0].close_ts,
+                    client_order_id="ORDER:S6-001:3",
+                ),
+            ),
+            run_id="REPLAY:S6-001",
+        )
+
+
+def test_equal_timestamp_order_intents_are_sorted_by_client_order_id() -> None:
+    bars = (_bar(0), _bar(1), _bar(2))
+
+    with pytest.raises(ReplayBuildError, match="submitted_at/client_order_id"):
+        replay_ohlctv_market_orders(
+            bars=bars,
+            order_intents=(
+                _intent(
+                    submitted_at=bars[0].close_ts,
+                    client_order_id="ORDER:S6-001:B",
+                ),
+                _intent(
+                    submitted_at=bars[0].close_ts,
+                    client_order_id="ORDER:S6-001:A",
+                ),
+            ),
             run_id="REPLAY:S6-001",
         )
 

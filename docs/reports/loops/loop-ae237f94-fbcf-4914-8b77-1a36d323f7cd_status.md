@@ -81,6 +81,7 @@ Additional focused checks expected:
 - #29 initial review found blocking gaps in effective-dated constraint selection and rejection accounting: constraints used submission time instead of fill-attempt event time, and report rejection counts could be inconsistent if hashes were rebuilt. Fixed before merge with fill-attempt-time selection, non-zero/exact rejection-count validation, and rollover/malformed-report tests.
 - #29 review also required account-not-tradable, unsupported metadata order type, tick-size, and lot-size tests before merge.
 - #30 initial review found a blocking evidence-integrity gap: scenario suite reports could omit or duplicate required scenarios, or drop required risk labels, if hashes were rebuilt. Fixed before merge with exact scenario-set validation, per-scenario FR/risk/label validation, suite-level traceability validation, and regression tests.
+- Final integration review found a blocking causal replay gap: order intents could be processed in caller/input order when `(submitted_at, client_order_id)` keys were non-monotonic. Fixed on the loop branch with fail-closed order-intent ordering validation and regression tests.
 - Simulator must not become a paper-only or research-only divergent path. Contracts must preserve the future shared gateway/order lifecycle direction.
 - Mocks are acceptable for deterministic fixtures only; they cannot replace production-path service wiring or hide missing simulator integration.
 - S6 is pre-risk-engine implementation, but work must not bypass or weaken future independent risk controls. Forced breach orders reaching a gateway remain stop-the-line by rule.
@@ -104,6 +105,7 @@ Additional focused checks expected:
 - #30 PR #93 pre-merge validation in sub-agent worktree after QA fixes/polish: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 213 tests.
 - Independent QA re-reviews approved #30 after required-scenario and traceability contract hardening.
 - Loop validation after #30 merge: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 213 tests.
+- Final integration blocker fix validation: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 215 tests.
 
 ## Human-sync decisions
 
@@ -112,4 +114,4 @@ None yet.
 ## Remaining blockers
 
 - No S6 sub-agent blockers remain.
-- Final integrated validation and Docker/runtime checks remain before final PR readiness.
+- Docker/runtime checks remain before final PR readiness; final blocker fix validation passed with no runtime/dependency changes.
