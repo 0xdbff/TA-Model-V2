@@ -11,9 +11,19 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
+from datetime import datetime
 from decimal import Decimal
 
-from ta_model.contracts.instrument_master import OrderType
+from ta_model.contracts.instrument_master import (
+    AccountStatus,
+    AccountType,
+    InstrumentMasterSnapshot,
+    InstrumentStatus,
+    InstrumentType,
+    OrderType,
+    TradingPermission,
+    VenueStatus,
+)
 from ta_model.contracts.market_data import OHLCTVBar
 from ta_model.contracts.simulation import (
     ExecutionCostModel,
@@ -23,6 +33,9 @@ from ta_model.contracts.simulation import (
     ReplayOrderResult,
     ReplayRejectReason,
     ReplayReport,
+    SimulatedAccountState,
+    SimulatedBalance,
+    build_rejection_counts,
     build_replay_order_result_id,
     build_replay_report_hash,
     build_replay_report_id,
@@ -39,6 +52,8 @@ def replay_ohlctv_market_orders(
     order_intents: Iterable[OrderIntent],
     run_id: str,
     execution_cost_model: ExecutionCostModel | None = None,
+    instrument_master_snapshot: InstrumentMasterSnapshot | None = None,
+    starting_account_state: SimulatedAccountState | None = None,
 ) -> ReplayReport:
     """Replay market order intents against validated event-time OHLCTV bars.
 
@@ -53,22 +68,42 @@ def replay_ohlctv_market_orders(
     intent_tuple = tuple(order_intents)
     _validate_bars_are_safe(bar_tuple)
     _validate_order_intents(intent_tuple)
+    if (instrument_master_snapshot is None) != (starting_account_state is None):
+        raise ReplayBuildError(
+            "instrument master snapshot and simulated account state must be supplied together"
+        )
 
-    results = tuple(
-        _replay_one(intent=intent, bars=bar_tuple, execution_cost_model=execution_cost_model)
-        for intent in intent_tuple
+    balances = _balance_dict(starting_account_state)
+    result_list: list[ReplayOrderResult] = []
+    for intent in intent_tuple:
+        result = _replay_one(
+            intent=intent,
+            bars=bar_tuple,
+            execution_cost_model=execution_cost_model,
+            instrument_master_snapshot=instrument_master_snapshot,
+            account_state=starting_account_state,
+            balances=balances,
+        )
+        result_list.append(result)
+    results = tuple(result_list)
+    final_account_state = (
+        _build_account_state(starting_account_state, balances)
+        if starting_account_state is not None
+        else None
     )
+    rejection_counts = build_rejection_counts(results=results)
     market_data_hash = _market_data_hash(bar_tuple)
-    requirement_ids = (
-        ("FR-012", "NFR-001")
-        if execution_cost_model is None
-        else ("FR-012", "NFR-001", "RISK-005")
+    requirement_ids = _requirement_ids(
+        execution_cost_model=execution_cost_model,
+        instrument_master_snapshot=instrument_master_snapshot,
     )
     report_hash = build_replay_report_hash(
         run_id=run_id,
         market_data_hash=market_data_hash,
         results=results,
         requirement_ids=requirement_ids,
+        rejection_counts=rejection_counts,
+        final_account_state=final_account_state,
     )
     return ReplayReport(
         replay_report_id=build_replay_report_id(replay_report_hash=report_hash),
@@ -78,6 +113,8 @@ def replay_ohlctv_market_orders(
         result_ids=tuple(result.replay_order_result_id for result in results),
         results=results,
         requirement_ids=requirement_ids,
+        rejection_counts=rejection_counts,
+        final_account_state=final_account_state,
     )
 
 
@@ -86,7 +123,19 @@ def _replay_one(
     intent: OrderIntent,
     bars: tuple[OHLCTVBar, ...],
     execution_cost_model: ExecutionCostModel | None,
+    instrument_master_snapshot: InstrumentMasterSnapshot | None,
+    account_state: SimulatedAccountState | None,
+    balances: dict[tuple[str, str], Decimal] | None,
 ) -> ReplayOrderResult:
+    if instrument_master_snapshot is not None and account_state is not None:
+        reject_reason = _metadata_reject_reason(
+            intent=intent,
+            snapshot=instrument_master_snapshot,
+            account_state=account_state,
+        )
+        if reject_reason is not None:
+            return _unfilled_result(intent=intent, reason=reject_reason)
+
     if intent.order_type is not OrderType.MARKET:
         return _unfilled_result(intent=intent, reason=ReplayRejectReason.UNSUPPORTED_ORDER_TYPE)
 
@@ -103,6 +152,15 @@ def _replay_one(
 
     if execution_cost_model is None:
         _, bar = eligible[0]
+        if instrument_master_snapshot is not None:
+            constraint_reason = _constraint_reject_reason(
+                intent=intent,
+                snapshot=instrument_master_snapshot,
+                reference_price=bar.open,
+                effective_at=bar.open_ts,
+            )
+            if constraint_reason is not None:
+                return _unfilled_result(intent=intent, reason=constraint_reason)
         filled_quantity = intent.quantity
         reference_notional = bar.open * filled_quantity
         result = ReplayOrderResult.model_construct(
@@ -130,9 +188,17 @@ def _replay_one(
             effective_notional=reference_notional,
         )
         result_id = build_replay_order_result_id(result=result)
-        return ReplayOrderResult(
+        filled_result = ReplayOrderResult(
             **result.model_dump(exclude={"replay_order_result_id"}),
             replay_order_result_id=result_id,
+        )
+        if instrument_master_snapshot is None or balances is None:
+            return filled_result
+        return _apply_balance_or_reject(
+            intent=intent,
+            result=filled_result,
+            snapshot=instrument_master_snapshot,
+            balances=balances,
         )
 
     if execution_cost_model.latency_bars >= len(eligible):
@@ -145,6 +211,21 @@ def _replay_one(
 
     eligible_event_index = eligible[0][0]
     fill_attempt_event_index, bar = eligible[execution_cost_model.latency_bars]
+    if instrument_master_snapshot is not None:
+        constraint_reason = _constraint_reject_reason(
+            intent=intent,
+            snapshot=instrument_master_snapshot,
+            reference_price=bar.open,
+            effective_at=bar.open_ts,
+        )
+        if constraint_reason is not None:
+            return _unfilled_result(
+                intent=intent,
+                reason=constraint_reason,
+                execution_cost_model=execution_cost_model,
+                eligible_event_index=eligible_event_index,
+                fill_attempt_event_index=fill_attempt_event_index,
+            )
     max_fill_quantity = bar.base_volume * execution_cost_model.max_participation_rate
     if max_fill_quantity <= 0:
         return _unfilled_result(
@@ -221,9 +302,17 @@ def _replay_one(
         total_cost=total_cost,
     )
     result_id = build_replay_order_result_id(result=result)
-    return ReplayOrderResult(
+    filled_result = ReplayOrderResult(
         **result.model_dump(exclude={"replay_order_result_id"}),
         replay_order_result_id=result_id,
+    )
+    if instrument_master_snapshot is None or balances is None:
+        return filled_result
+    return _apply_balance_or_reject(
+        intent=intent,
+        result=filled_result,
+        snapshot=instrument_master_snapshot,
+        balances=balances,
     )
 
 
@@ -236,9 +325,10 @@ def _unfilled_result(
     fill_attempt_event_index: int | None = None,
 ) -> ReplayOrderResult:
     status = (
-        ReplayFillStatus.REJECTED
-        if reason is ReplayRejectReason.UNSUPPORTED_ORDER_TYPE
-        else ReplayFillStatus.UNFILLED
+        ReplayFillStatus.UNFILLED
+        if reason
+        in {ReplayRejectReason.NO_FUTURE_ELIGIBLE_EVENT, ReplayRejectReason.INSUFFICIENT_LIQUIDITY}
+        else ReplayFillStatus.REJECTED
     )
     result = ReplayOrderResult.model_construct(
         replay_order_result_id="REPLAYORDER:PLACEHOLDER",
@@ -269,6 +359,150 @@ def _unfilled_result(
         **result.model_dump(exclude={"replay_order_result_id"}),
         replay_order_result_id=result_id,
     )
+
+
+def _metadata_reject_reason(
+    *,
+    intent: OrderIntent,
+    snapshot: InstrumentMasterSnapshot,
+    account_state: SimulatedAccountState,
+) -> ReplayRejectReason | None:
+    venue = next((item for item in snapshot.venues if item.venue_id == intent.venue_id), None)
+    if venue is None or venue.status is not VenueStatus.ACTIVE:
+        return ReplayRejectReason.VENUE_NOT_TRADABLE
+    if intent.order_type not in venue.supported_order_types:
+        return ReplayRejectReason.UNSUPPORTED_ORDER_TYPE
+
+    instrument = next(
+        (item for item in snapshot.instruments if item.instrument_id == intent.instrument_id), None
+    )
+    if (
+        instrument is None
+        or instrument.venue_id != intent.venue_id
+        or instrument.instrument_type is not InstrumentType.SPOT
+        or instrument.status is not InstrumentStatus.TRADING
+        or instrument.is_derivative
+        or instrument.margin_allowed
+        or instrument.short_selling_allowed
+        or instrument.leverage_allowed
+    ):
+        return ReplayRejectReason.INSTRUMENT_NOT_TRADABLE
+    if intent.order_type not in instrument.supported_order_types:
+        return ReplayRejectReason.UNSUPPORTED_ORDER_TYPE
+
+    account = next(
+        (item for item in snapshot.accounts if item.account_id == account_state.account_id), None
+    )
+    if (
+        account is None
+        or account.venue_id != intent.venue_id
+        or account.status is not AccountStatus.ACTIVE
+        or account.account_type not in {AccountType.SIMULATION, AccountType.PAPER}
+        or TradingPermission.PLACE_ORDERS not in account.trading_permissions
+        or account.live_capital_enabled
+        or account.margin_enabled
+        or account.derivatives_enabled
+        or account.shorting_enabled
+    ):
+        return ReplayRejectReason.ACCOUNT_NOT_TRADABLE
+    return None
+
+
+def _constraint_reject_reason(
+    *,
+    intent: OrderIntent,
+    snapshot: InstrumentMasterSnapshot,
+    reference_price: Decimal,
+    effective_at: datetime,
+) -> ReplayRejectReason | None:
+    active_constraints = [
+        constraint
+        for constraint in snapshot.instrument_constraints
+        if constraint.instrument_id == intent.instrument_id
+        and constraint.effective_from <= effective_at
+        and (constraint.effective_to is None or effective_at < constraint.effective_to)
+    ]
+    if len(active_constraints) != 1:
+        return ReplayRejectReason.CONSTRAINT_VIOLATION
+    constraint_result = active_constraints[0].evaluate_order(
+        price=reference_price,
+        quantity=intent.quantity,
+    )
+    if not constraint_result.passed:
+        return ReplayRejectReason.CONSTRAINT_VIOLATION
+    return None
+
+
+def _apply_balance_or_reject(
+    *,
+    intent: OrderIntent,
+    result: ReplayOrderResult,
+    snapshot: InstrumentMasterSnapshot,
+    balances: dict[tuple[str, str], Decimal],
+) -> ReplayOrderResult:
+    instrument = next(
+        item for item in snapshot.instruments if item.instrument_id == intent.instrument_id
+    )
+    base_key = (intent.venue_id, instrument.base_asset_id)
+    quote_key = (intent.venue_id, instrument.quote_asset_id)
+    base_balance = balances.get(base_key, Decimal("0"))
+    quote_balance = balances.get(quote_key, Decimal("0"))
+
+    if intent.side is OrderSide.BUY:
+        debit = result.effective_notional + result.fee_cost
+        if quote_balance < debit:
+            return _unfilled_result(intent=intent, reason=ReplayRejectReason.INSUFFICIENT_CASH)
+        balances[quote_key] = quote_balance - debit
+        balances[base_key] = base_balance + result.filled_quantity
+        return result
+
+    if base_balance < result.filled_quantity:
+        return _unfilled_result(intent=intent, reason=ReplayRejectReason.INSUFFICIENT_INVENTORY)
+    balances[base_key] = base_balance - result.filled_quantity
+    balances[quote_key] = quote_balance + result.effective_notional - result.fee_cost
+    return result
+
+
+def _balance_dict(
+    account_state: SimulatedAccountState | None,
+) -> dict[tuple[str, str], Decimal] | None:
+    if account_state is None:
+        return None
+    return {
+        (balance.venue_id, balance.asset_id): balance.available
+        for balance in account_state.balances
+    }
+
+
+def _build_account_state(
+    account_state: SimulatedAccountState | None,
+    balances: dict[tuple[str, str], Decimal] | None,
+) -> SimulatedAccountState | None:
+    if account_state is None or balances is None:
+        return None
+    final_balances = tuple(
+        SimulatedBalance(
+            account_id=account_state.account_id,
+            venue_id=venue_id,
+            asset_id=asset_id,
+            available=available,
+        )
+        for (venue_id, asset_id), available in sorted(balances.items())
+    )
+    return SimulatedAccountState(account_id=account_state.account_id, balances=final_balances)
+
+
+def _requirement_ids(
+    *,
+    execution_cost_model: ExecutionCostModel | None,
+    instrument_master_snapshot: InstrumentMasterSnapshot | None,
+) -> tuple[str, ...]:
+    ids = ["FR-012", "NFR-001"]
+    if execution_cost_model is not None:
+        ids.append("RISK-005")
+    if instrument_master_snapshot is not None:
+        ids.extend(("FR-003", "FR-010"))
+    return tuple(ids)
 
 
 def _validate_bars_are_safe(bars: tuple[OHLCTVBar, ...]) -> None:
