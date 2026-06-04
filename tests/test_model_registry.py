@@ -73,6 +73,24 @@ def test_candidate_registry_record_maps_training_lineage_and_is_deterministic() 
     assert first.auto_promotion_enabled is False
 
 
+def test_candidate_registry_record_can_carry_source_forecast_model_lineage() -> None:
+    training_run = _training_run()
+    record = build_candidate_registry_record(
+        training_run=training_run,
+        model_name="s7-reference-model",
+        model_version="1",
+        mlflow=_mlflow_reference(),
+        created_by="registry-operator",
+        created_at=NOW,
+        state_reason="candidate registration linked to forecast output",
+        source_model_version_id="MODELVERSION:ABCDEFABCDEFABCDEFABCDEFABCDEF12",
+        source_model_version_hash="b" * 64,
+    )
+
+    assert record.source_model_version_id == "MODELVERSION:ABCDEFABCDEFABCDEFABCDEFABCDEF12"
+    assert record.source_model_version_hash == "b" * 64
+
+
 def test_champion_registry_record_requires_approved_review_and_rollback_pointer() -> None:
     candidate = _candidate_record()
     rollback_pointer = build_rollback_pointer(
@@ -397,6 +415,8 @@ def _rebuild_record_identity(payload: dict[str, object]) -> None:
     artifacts_payload = cast("list[dict[str, Any]]", payload["artifacts"])
     record_hash = build_registry_record_hash(
         model_version_id=str(payload["model_version_id"]),
+        source_model_version_id=cast("str | None", payload.get("source_model_version_id")),
+        source_model_version_hash=cast("str | None", payload.get("source_model_version_hash")),
         model_name=str(payload["model_name"]),
         model_version=str(payload["model_version"]),
         training_run_id=str(payload["training_run_id"]),

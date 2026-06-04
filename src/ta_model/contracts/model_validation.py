@@ -21,8 +21,13 @@ from typing import Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from ta_model.contracts.datasets import DatasetSplit
+from ta_model.contracts.datasets import DatasetSplit, build_dataset_snapshot_id
+from ta_model.contracts.forecasts import (
+    build_model_version_id,
+    build_probabilistic_output_id,
+)
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
+from ta_model.contracts.training import build_training_run_id
 
 
 class ModelGateRecommendation(StrEnum):
@@ -85,6 +90,7 @@ class BaselineEvidenceReference(ContractModel):
     """Fixed S5 baseline evidence required before S7 model gate review."""
 
     scorecard_id: CanonicalId
+    scorecard_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     gate_report_path: NonEmptyString
     scorecard_report_path: NonEmptyString
     baseline_gate_status: Literal["PASS"] = "PASS"
@@ -108,6 +114,8 @@ class RegistryMetadataReference(ContractModel):
     registry_record_id: CanonicalId
     registry_record_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_version_id: CanonicalId
+    source_model_version_id: CanonicalId
+    source_model_version_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     current_state: NonEmptyString
     auto_promotion_enabled: Literal[False] = False
 
@@ -146,6 +154,27 @@ class ModelValidationReport(ContractModel):
             raise ValueError("model validation reports require evaluated_splits")
         if not self.evaluated_forecast_ids:
             raise ValueError("model validation reports require forecast IDs")
+        if len(set(self.evaluated_forecast_ids)) != len(self.evaluated_forecast_ids):
+            raise ValueError("evaluated_forecast_ids must be unique")
+        if self.dataset_snapshot_id != build_dataset_snapshot_id(dataset_hash=self.dataset_hash):
+            raise ValueError("dataset_snapshot_id does not match dataset_hash")
+        if self.training_run_id != build_training_run_id(
+            training_run_hash=self.training_run_hash
+        ):
+            raise ValueError("training_run_id does not match training_run_hash")
+        if self.model_version_id != build_model_version_id(
+            model_version_hash=self.model_version_hash
+        ):
+            raise ValueError("model_version_id does not match model_version_hash")
+        if self.forecast_output_id != build_probabilistic_output_id(
+            output_hash=self.forecast_output_hash
+        ):
+            raise ValueError("forecast_output_id does not match forecast_output_hash")
+        if self.registry_metadata is not None:
+            if self.registry_metadata.source_model_version_id != self.model_version_id:
+                raise ValueError("registry source_model_version_id does not match report")
+            if self.registry_metadata.source_model_version_hash != self.model_version_hash:
+                raise ValueError("registry source_model_version_hash does not match report")
         if self.recommendation is ModelGateRecommendation.PASS:
             if any("forecast-only" in caveat.lower() for caveat in self.caveats):
                 raise ValueError("forecast-only reports cannot be pass recommendations")

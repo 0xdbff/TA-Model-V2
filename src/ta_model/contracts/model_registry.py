@@ -111,6 +111,8 @@ class ModelRegistryRecord(ContractModel):
     registry_record_id: CanonicalId
     registry_record_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_version_id: CanonicalId
+    source_model_version_id: CanonicalId | None = None
+    source_model_version_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     model_name: NonEmptyString
     model_version: NonEmptyString
     training_run_id: CanonicalId
@@ -152,6 +154,8 @@ class ModelRegistryRecord(ContractModel):
             raise ValueError("mlflow registered_model_name must match model_name")
         if self.mlflow.model_version != self.model_version:
             raise ValueError("mlflow model_version must match model_version")
+        if (self.source_model_version_id is None) != (self.source_model_version_hash is None):
+            raise ValueError("source model version lineage requires both id and hash")
         _validate_governance_metadata(
             state=self.current_state,
             rollback_pointer=self.rollback_pointer,
@@ -167,6 +171,8 @@ class ModelRegistryRecord(ContractModel):
             raise ValueError("model_version_id is not deterministic")
         expected_hash = build_registry_record_hash(
             model_version_id=self.model_version_id,
+            source_model_version_id=self.source_model_version_id,
+            source_model_version_hash=self.source_model_version_hash,
             model_name=self.model_name,
             model_version=self.model_version,
             training_run_id=self.training_run_id,
@@ -257,6 +263,8 @@ def build_candidate_registry_record(
     created_by: str,
     created_at: datetime,
     state_reason: str,
+    source_model_version_id: str | None = None,
+    source_model_version_hash: str | None = None,
 ) -> ModelRegistryRecord:
     """Create a deterministic candidate record from training lineage."""
 
@@ -269,6 +277,8 @@ def build_candidate_registry_record(
         created_by=created_by,
         created_at=created_at,
         state_reason=state_reason,
+        source_model_version_id=source_model_version_id,
+        source_model_version_hash=source_model_version_hash,
     )
 
 
@@ -282,6 +292,8 @@ def build_model_registry_record(
     created_by: str,
     created_at: datetime,
     state_reason: str,
+    source_model_version_id: str | None = None,
+    source_model_version_hash: str | None = None,
     rollback_pointer: RegistryRollbackPointer | None = None,
     review: RegistryReviewMetadata | None = None,
     approval: RegistryApprovalMetadata | None = None,
@@ -293,6 +305,8 @@ def build_model_registry_record(
     )
     record_hash = build_registry_record_hash(
         model_version_id=model_version_id,
+        source_model_version_id=source_model_version_id,
+        source_model_version_hash=source_model_version_hash,
         model_name=model_name,
         model_version=model_version,
         training_run_id=training_run.training_run_id,
@@ -318,6 +332,8 @@ def build_model_registry_record(
         registry_record_id=build_registry_record_id(registry_record_hash=record_hash),
         registry_record_hash=record_hash,
         model_version_id=model_version_id,
+        source_model_version_id=source_model_version_id,
+        source_model_version_hash=source_model_version_hash,
         model_name=model_name,
         model_version=model_version,
         training_run_id=training_run.training_run_id,
@@ -460,35 +476,39 @@ def build_registry_record_hash(
     created_by: str,
     created_at: datetime,
     state_reason: str,
-    rollback_pointer: RegistryRollbackPointer | None,
-    review: RegistryReviewMetadata | None,
-    approval: RegistryApprovalMetadata | None,
+    source_model_version_id: str | None = None,
+    source_model_version_hash: str | None = None,
+    rollback_pointer: RegistryRollbackPointer | None = None,
+    review: RegistryReviewMetadata | None = None,
+    approval: RegistryApprovalMetadata | None = None,
 ) -> str:
-    return _hash(
-        {
-            "approval": _optional_model_json(approval),
-            "artifacts": tuple(_model_json(artifact) for artifact in artifacts),
-            "code_commit": validate_code_commit(code_commit),
-            "created_at": created_at.isoformat(),
-            "created_by": created_by,
-            "current_state": current_state.value,
-            "dataset_hash": dataset_hash,
-            "dataset_snapshot_id": dataset_snapshot_id,
-            "metrics": tuple(_model_json(metric) for metric in metrics),
-            "mlflow": _model_json(mlflow),
-            "model_name": model_name,
-            "model_version": model_version,
-            "model_version_id": model_version_id,
-            "review": _optional_model_json(review),
-            "rollback_pointer": _optional_model_json(rollback_pointer),
-            "seed": seed,
-            "state_reason": state_reason,
-            "training_config_hash": training_config_hash,
-            "training_config_id": training_config_id,
-            "training_run_hash": training_run_hash,
-            "training_run_id": training_run_id,
-        }
-    )
+    payload = {
+        "approval": _optional_model_json(approval),
+        "artifacts": tuple(_model_json(artifact) for artifact in artifacts),
+        "code_commit": validate_code_commit(code_commit),
+        "created_at": created_at.isoformat(),
+        "created_by": created_by,
+        "current_state": current_state.value,
+        "dataset_hash": dataset_hash,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "metrics": tuple(_model_json(metric) for metric in metrics),
+        "mlflow": _model_json(mlflow),
+        "model_name": model_name,
+        "model_version": model_version,
+        "model_version_id": model_version_id,
+        "review": _optional_model_json(review),
+        "rollback_pointer": _optional_model_json(rollback_pointer),
+        "seed": seed,
+        "state_reason": state_reason,
+        "training_config_hash": training_config_hash,
+        "training_config_id": training_config_id,
+        "training_run_hash": training_run_hash,
+        "training_run_id": training_run_id,
+    }
+    if source_model_version_id is not None or source_model_version_hash is not None:
+        payload["source_model_version_hash"] = source_model_version_hash
+        payload["source_model_version_id"] = source_model_version_id
+    return _hash(payload)
 
 
 def build_registry_transition_hash(

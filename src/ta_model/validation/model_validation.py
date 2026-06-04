@@ -143,13 +143,22 @@ def build_model_validation_report(
 
 
 def _validate_baseline_evidence_paths(evidence: BaselineEvidenceReference) -> None:
-    missing = [
-        path
-        for path in (evidence.gate_report_path, evidence.scorecard_report_path)
-        if not Path(path).exists()
-    ]
+    gate_path = Path(evidence.gate_report_path)
+    scorecard_path = Path(evidence.scorecard_report_path)
+    missing = [path for path in (gate_path, scorecard_path) if not path.exists()]
     if missing:
-        raise ModelValidationError(f"fixed S5 baseline evidence is missing: {', '.join(missing)}")
+        raise ModelValidationError(
+            f"fixed S5 baseline evidence is missing: {', '.join(str(path) for path in missing)}"
+        )
+    gate_text = gate_path.read_text(encoding="utf-8")
+    scorecard_text = scorecard_path.read_text(encoding="utf-8")
+    if "Decision: PASS" not in gate_text:
+        raise ModelValidationError("S5 baseline gate evidence must contain a PASS decision")
+    for label, text in (("gate", gate_text), ("scorecard", scorecard_text)):
+        if evidence.scorecard_id not in text:
+            raise ModelValidationError(f"S5 {label} evidence does not contain scorecard ID")
+        if evidence.scorecard_hash not in text:
+            raise ModelValidationError(f"S5 {label} evidence does not contain scorecard hash")
 
 
 def _validate_forecast_alignment(
@@ -172,7 +181,13 @@ def _validate_forecast_alignment(
             "forecasts must cover exactly the dataset rows for evaluated splits"
         )
     aligned: dict[str, DatasetRow] = {}
+    expected_quantile_levels: tuple[Decimal, ...] | None = None
     for forecast in candidate_output.forecasts:
+        quantile_levels = tuple(quantile.level for quantile in forecast.quantiles)
+        if expected_quantile_levels is None:
+            expected_quantile_levels = quantile_levels
+        elif quantile_levels != expected_quantile_levels:
+            raise ModelValidationError("all forecasts must use identical quantile levels")
         row = rows_by_id.get(forecast.dataset_row_id)
         if row is None:
             raise ModelValidationError("forecast references an unknown dataset row")
@@ -342,12 +357,22 @@ def _registry_metadata(
         raise ModelValidationError("registry record training_run_id does not match forecasts")
     if registry_record.training_run_hash != output.training_run_hash:
         raise ModelValidationError("registry record training_run_hash does not match forecasts")
+    if registry_record.dataset_snapshot_id != output.dataset_snapshot_id:
+        raise ModelValidationError("registry record dataset_snapshot_id does not match forecasts")
+    if registry_record.dataset_hash != output.dataset_hash:
+        raise ModelValidationError("registry record dataset_hash does not match forecasts")
     if registry_record.current_state is not ModelRegistryState.CANDIDATE:
         raise ModelValidationError("S7-004 validation expects registry record state=candidate")
+    if registry_record.source_model_version_id != output.model_version_id:
+        raise ModelValidationError("registry source_model_version_id does not match forecasts")
+    if registry_record.source_model_version_hash != output.model_version_hash:
+        raise ModelValidationError("registry source_model_version_hash does not match forecasts")
     return RegistryMetadataReference(
         registry_record_id=registry_record.registry_record_id,
         registry_record_hash=registry_record.registry_record_hash,
         model_version_id=registry_record.model_version_id,
+        source_model_version_id=registry_record.source_model_version_id,
+        source_model_version_hash=registry_record.source_model_version_hash,
         current_state=registry_record.current_state.value,
         auto_promotion_enabled=registry_record.auto_promotion_enabled,
     )
