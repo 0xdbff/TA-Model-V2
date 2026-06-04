@@ -47,6 +47,13 @@ from ta_model.contracts.market_data import (
     TradeRecord,
     TradeSide,
 )
+from ta_model.contracts.scenarios import (
+    ScenarioStatusCount,
+    SyntheticScenarioId,
+    SyntheticScenarioResult,
+    SyntheticScenarioSuiteReport,
+    make_synthetic_scenario_suite_report,
+)
 from ta_model.contracts.simulation import (
     ExecutionCostModel,
     OrderIntent,
@@ -136,6 +143,7 @@ __all__ = [
     "RateLimitState",
     "RawPayloadReference",
     "RetryState",
+    "ScenarioStatusCount",
     "ReplayFillStatus",
     "ReplayOrderResult",
     "ReplayRejectReason",
@@ -145,8 +153,12 @@ __all__ = [
     "SimulatedBalance",
     "build_rejection_counts",
     "make_execution_cost_model",
+    "make_synthetic_scenario_suite_report",
     "SourceApproval",
     "SourceId",
+    "SyntheticScenarioId",
+    "SyntheticScenarioResult",
+    "SyntheticScenarioSuiteReport",
     "TradingPermission",
     "TradingSession",
     "TradingSessionStatus",
