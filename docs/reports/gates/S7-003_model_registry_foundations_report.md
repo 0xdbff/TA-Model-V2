@@ -15,8 +15,13 @@
 - Images/packages are pinned (`postgres:16.4`,
   `minio/minio:RELEASE.2024-12-18T13-15-44Z`, `python:3.12.8-slim`,
   `mlflow==2.17.2`, `psycopg2-binary==2.9.10`, `boto3==1.35.99`).
-- Local environment defaults are explicitly non-secret placeholders. Operators must
-  override them outside version control before any non-local use.
+- Compose does not commit password/access-key defaults. Operators must export
+  `MLFLOW_POSTGRES_DB`, `MLFLOW_POSTGRES_USER`, `MLFLOW_POSTGRES_PASSWORD`,
+  `MLFLOW_MINIO_ROOT_USER`, and `MLFLOW_MINIO_ROOT_PASSWORD` or provide them from an
+  ignored `.env` file shaped from `.env.example` before profile config/startup.
+- MLflow and MinIO host-published ports are bound to `127.0.0.1` only for local use.
+- The app-owned MLflow image declares a non-root `USER`, and the MLflow service has a
+  healthcheck against `/health`.
 - Durable registry metadata/artifact state uses named PostgreSQL/MinIO volumes; no
   registry audit state is intentionally stored in ephemeral-only containers.
 
@@ -30,19 +35,26 @@
 - Fail-closed validators reject champion/shadow states without rollback pointer plus
   approved review/approval metadata, reject invalid transition combinations, and keep
   `auto_promotion_enabled` as literal `False`.
+- Registry records also validate lineage relationships independently of rebuilt record
+  hashes/IDs: training run ID/hash, training config ID/hash, dataset snapshot ID/hash,
+  non-empty metrics/artifacts, and MLflow model name/version consistency.
+- Champion/shadow governance requires distinct reviewer/approver actors and approval
+  timestamps that do not precede review timestamps.
 - Tests cover valid candidate and champion metadata, rollback requirements, invalid
-  transition rejection, deterministic identity, and no-auto-promotion enforcement.
+  transition rejection, deterministic identity, lineage mismatch tamper regression,
+  runtime policy checks, and no-auto-promotion enforcement.
 
 ## Validation
 
 - `uv run ruff check .` — passed.
-- `uv run mypy src tests` — passed (`Success: no issues found in 59 source files`).
-- `uv run pytest tests/test_training_runner.py tests/test_model_registry.py` — passed
-  (`12 passed`).
-- `uv run pytest` — passed (`227 passed`).
-- `docker compose config` — passed; no default-profile services are started implicitly.
-- `docker compose --profile core --profile research config` — passed; registry services
-  render with local placeholder credentials only.
+- `uv run mypy src tests` — passed (`Success: no issues found in 60 source files`).
+- `uv run pytest tests/test_training_runner.py tests/test_model_registry.py
+  tests/test_registry_runtime_policy.py` — passed (`25 passed`).
+- `uv run pytest` — passed (`240 passed`).
+- `docker compose config` — run with ephemeral local environment variables; passed and no
+  default-profile services are started implicitly.
+- `docker compose --profile core --profile research config` — run with ephemeral local
+  environment variables; passed without committed secret defaults.
 
 ## Anti-drift checks
 
@@ -51,7 +63,18 @@
   introduced.
 - No autonomous promotion, widened model limits, serving route, live credential, paper/live
   gateway, or risk-engine bypass was introduced.
-- No real secrets were committed; Compose defaults are local placeholders only.
+- No real secrets or committed secret defaults were added; `.env`/`.env.*` are ignored and
+  `.env.example` is shape-only with empty values.
+
+## Runtime startup follow-up
+
+- A MinIO bucket-init service was not added in this pass to avoid brittle startup wiring
+  around runtime-provided secrets and bucket policies without an accompanying service
+  smoke test. Follow-up hardening should add a pinned `mc` init service plus an integration
+  startup check that creates/verifies `ta-model-v2-mlflow-artifacts` using only runtime
+  env/secrets.
+- Image digest pinning is a future provenance hardening step; tags/packages remain pinned
+  for this scoped issue.
 
 ## Follow-up notes for #34
 

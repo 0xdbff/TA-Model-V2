@@ -21,11 +21,14 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from ta_model.contracts.datasets import build_dataset_snapshot_id
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
 from ta_model.contracts.training import (
     TrainingArtifactReference,
     TrainingMetric,
     TrainingRunResult,
+    build_training_config_id,
+    build_training_run_id,
     validate_code_commit,
 )
 
@@ -133,6 +136,22 @@ class ModelRegistryRecord(ContractModel):
     @model_validator(mode="after")
     def record_is_fail_closed_and_deterministic(self) -> Self:
         validate_code_commit(self.code_commit)
+        if not self.metrics:
+            raise ValueError("registry records require at least one metric")
+        if not self.artifacts:
+            raise ValueError("registry records require at least one artifact reference")
+        if self.training_run_id != build_training_run_id(training_run_hash=self.training_run_hash):
+            raise ValueError("training_run_id does not match training_run_hash")
+        if self.training_config_id != build_training_config_id(
+            training_config_hash=self.training_config_hash
+        ):
+            raise ValueError("training_config_id does not match training_config_hash")
+        if self.dataset_snapshot_id != build_dataset_snapshot_id(dataset_hash=self.dataset_hash):
+            raise ValueError("dataset_snapshot_id does not match dataset_hash")
+        if self.mlflow.registered_model_name != self.model_name:
+            raise ValueError("mlflow registered_model_name must match model_name")
+        if self.mlflow.model_version != self.model_version:
+            raise ValueError("mlflow model_version must match model_version")
         _validate_governance_metadata(
             state=self.current_state,
             rollback_pointer=self.rollback_pointer,
@@ -515,6 +534,10 @@ def _validate_governance_metadata(
             raise ValueError("champion/shadow states require review and approval metadata")
         if review.decision is not ReviewDecision.APPROVED:
             raise ValueError("champion/shadow review decision must be approved")
+        if review.reviewed_by == approval.approved_by:
+            raise ValueError("champion/shadow reviewer and approver must be distinct")
+        if approval.approved_at < review.reviewed_at:
+            raise ValueError("champion/shadow approval timestamp must not precede review")
     if state is ModelRegistryState.REJECTED:
         if review is None or review.decision is not ReviewDecision.REJECTED:
             raise ValueError("rejected state requires rejected review metadata")

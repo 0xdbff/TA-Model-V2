@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
 
-from ta_model.contracts.datasets import DatasetSplit
+from ta_model.contracts.datasets import DatasetSplit, build_dataset_snapshot_id
 from ta_model.contracts.model_registry import (
     MlflowRegistryReference,
     ModelRegistryRecord,
@@ -18,10 +19,13 @@ from ta_model.contracts.model_registry import (
     ReviewDecision,
     build_candidate_registry_record,
     build_model_registry_record,
+    build_registry_record_hash,
+    build_registry_record_id,
     build_registry_transition,
     build_rollback_pointer,
 )
 from ta_model.contracts.training import (
+    TrainingArtifactReference,
     TrainingMetric,
     TrainingRunResult,
     TrainingRunStatus,
@@ -201,6 +205,98 @@ def test_transition_to_champion_is_deterministic_and_requires_human_metadata() -
         )
 
 
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    (
+        ({"training_run_id": "TRAINRUN:BADBADBADBADBADBADBADBADBADBAD12"}, "training_run_id"),
+        (
+            {"training_config_id": "TRAINCONFIG:BADBADBADBADBADBADBADBADBADBAD"},
+            "training_config_id",
+        ),
+        (
+            {"dataset_snapshot_id": "DATASETSNAPSHOT:BADBADBADBADBADBADBADBADBAD"},
+            "dataset_snapshot_id",
+        ),
+        ({"mlflow": {"registered_model_name": "different-model"}}, "registered_model_name"),
+        ({"mlflow": {"model_version": "99"}}, "model_version"),
+    ),
+)
+def test_rebuilt_record_identity_still_rejects_lineage_mismatches(
+    mutation: dict[str, object], match: str
+) -> None:
+    payload = _candidate_record().model_dump(mode="json")
+    _deep_update(payload, mutation)
+    _rebuild_record_identity(payload)
+
+    with pytest.raises(ValidationError, match=match):
+        ModelRegistryRecord.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    (({"metrics": []}, "at least one metric"), ({"artifacts": []}, "artifact reference")),
+)
+def test_registry_record_requires_metrics_and_artifacts(
+    mutation: dict[str, object], match: str
+) -> None:
+    payload = _candidate_record().model_dump(mode="json")
+    _deep_update(payload, mutation)
+    _rebuild_record_identity(payload)
+
+    with pytest.raises(ValidationError, match=match):
+        ModelRegistryRecord.model_validate(payload)
+
+
+def test_champion_shadow_reviewer_and_approver_must_be_distinct() -> None:
+    candidate = _candidate_record()
+    rollback_pointer = build_rollback_pointer(
+        target_model_version_id=candidate.model_version_id,
+        target_registry_record_id=candidate.registry_record_id,
+        target_state=ModelRegistryState.CANDIDATE,
+        reason="rollback target for governance fixture",
+    )
+
+    with pytest.raises(ValidationError, match="reviewer and approver must be distinct"):
+        build_model_registry_record(
+            training_run=_training_run(),
+            model_name="s7-reference-model",
+            model_version="2",
+            current_state=ModelRegistryState.CHAMPION,
+            mlflow=_mlflow_reference(model_version="2"),
+            created_by="registry-operator",
+            created_at=NOW,
+            state_reason="invalid same-actor champion metadata fixture",
+            rollback_pointer=rollback_pointer,
+            review=_review(ReviewDecision.APPROVED),
+            approval=_approval(approved_by="model-risk-reviewer"),
+        )
+
+
+def test_champion_shadow_approval_timestamp_must_not_precede_review() -> None:
+    candidate = _candidate_record()
+    rollback_pointer = build_rollback_pointer(
+        target_model_version_id=candidate.model_version_id,
+        target_registry_record_id=candidate.registry_record_id,
+        target_state=ModelRegistryState.CANDIDATE,
+        reason="rollback target for timestamp fixture",
+    )
+
+    with pytest.raises(ValidationError, match="approval timestamp must not precede review"):
+        build_model_registry_record(
+            training_run=_training_run(),
+            model_name="s7-reference-model",
+            model_version="2",
+            current_state=ModelRegistryState.SHADOW,
+            mlflow=_mlflow_reference(model_version="2"),
+            created_by="registry-operator",
+            created_at=NOW,
+            state_reason="invalid approval timestamp shadow fixture",
+            rollback_pointer=rollback_pointer,
+            review=_review(ReviewDecision.APPROVED),
+            approval=_approval(approved_at=datetime(2026, 5, 1, 11, 59, tzinfo=UTC)),
+        )
+
+
 def _candidate_record() -> ModelRegistryRecord:
     return build_candidate_registry_record(
         training_run=_training_run(),
@@ -215,6 +311,8 @@ def _candidate_record() -> ModelRegistryRecord:
 
 def _training_run() -> TrainingRunResult:
     config = build_training_config(name="s7-003-reference", seed=7)
+    dataset_hash = "a" * 64
+    dataset_snapshot_id = build_dataset_snapshot_id(dataset_hash=dataset_hash)
     metrics = (
         TrainingMetric(name="train_label_mean", split=DatasetSplit.TRAIN, value=Decimal("0.10")),
         TrainingMetric(
@@ -229,8 +327,8 @@ def _training_run() -> TrainingRunResult:
         ),
     )
     run_hash = build_training_run_hash(
-        dataset_snapshot_id="DATASETSNAPSHOT:S7-003-FIXTURE",
-        dataset_hash="a" * 64,
+        dataset_snapshot_id=dataset_snapshot_id,
+        dataset_hash=dataset_hash,
         training_config=config,
         code_commit=CODE_COMMIT,
         seed=config.seed,
@@ -241,8 +339,8 @@ def _training_run() -> TrainingRunResult:
     return TrainingRunResult(
         training_run_id=build_training_run_id(training_run_hash=run_hash),
         training_run_hash=run_hash,
-        dataset_snapshot_id="DATASETSNAPSHOT:S7-003-FIXTURE",
-        dataset_hash="a" * 64,
+        dataset_snapshot_id=dataset_snapshot_id,
+        dataset_hash=dataset_hash,
         training_config=config,
         code_commit=CODE_COMMIT,
         seed=config.seed,
@@ -274,10 +372,53 @@ def _review(decision: ReviewDecision) -> RegistryReviewMetadata:
     )
 
 
-def _approval() -> RegistryApprovalMetadata:
+def _approval(
+    *, approved_by: str = "model-governance-owner", approved_at: datetime = NOW
+) -> RegistryApprovalMetadata:
     return RegistryApprovalMetadata(
-        approved_by="model-governance-owner",
-        approved_at=NOW,
+        approved_by=approved_by,
+        approved_at=approved_at,
         reason="approved fixture promotion metadata with rollback pointer",
         approval_id="APPROVAL:S7-003-CHAMPION-FIXTURE",
     )
+
+
+def _deep_update(payload: dict[str, object], mutation: dict[str, object]) -> None:
+    for key, value in mutation.items():
+        current = payload.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            _deep_update(current, value)
+        else:
+            payload[key] = value
+
+
+def _rebuild_record_identity(payload: dict[str, object]) -> None:
+    metrics_payload = cast("list[dict[str, Any]]", payload["metrics"])
+    artifacts_payload = cast("list[dict[str, Any]]", payload["artifacts"])
+    record_hash = build_registry_record_hash(
+        model_version_id=str(payload["model_version_id"]),
+        model_name=str(payload["model_name"]),
+        model_version=str(payload["model_version"]),
+        training_run_id=str(payload["training_run_id"]),
+        training_run_hash=str(payload["training_run_hash"]),
+        dataset_snapshot_id=str(payload["dataset_snapshot_id"]),
+        dataset_hash=str(payload["dataset_hash"]),
+        training_config_id=str(payload["training_config_id"]),
+        training_config_hash=str(payload["training_config_hash"]),
+        code_commit=str(payload["code_commit"]),
+        seed=int(cast("int | str", payload["seed"])),
+        metrics=tuple(TrainingMetric.model_validate(metric) for metric in metrics_payload),
+        artifacts=tuple(
+            TrainingArtifactReference.model_validate(artifact) for artifact in artifacts_payload
+        ),
+        current_state=ModelRegistryState(str(payload["current_state"])),
+        mlflow=MlflowRegistryReference.model_validate(payload["mlflow"]),
+        created_by=str(payload["created_by"]),
+        created_at=datetime.fromisoformat(str(payload["created_at"])),
+        state_reason=str(payload["state_reason"]),
+        rollback_pointer=None,
+        review=None,
+        approval=None,
+    )
+    payload["registry_record_hash"] = record_hash
+    payload["registry_record_id"] = build_registry_record_id(registry_record_hash=record_hash)
