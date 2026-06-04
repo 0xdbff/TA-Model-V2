@@ -23,6 +23,7 @@ from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from ta_model.contracts.datasets import DatasetSplit
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
+from ta_model.contracts.training import build_training_run_id
 
 
 class CalibrationStatus(StrEnum):
@@ -30,6 +31,7 @@ class CalibrationStatus(StrEnum):
 
     UNCALIBRATED = "uncalibrated"
     TRAIN_PRIOR_ONLY = "train_prior_only"
+    SEQUENCE_CONDITIONED_TRAIN_ONLY = "sequence_conditioned_train_only"
     CALIBRATED = "calibrated"
 
 
@@ -107,11 +109,23 @@ class Forecast(ContractModel):
             previous_value = quantile.value
         if self.split is DatasetSplit.TRAIN:
             raise ValueError("forecasts must be out-of-sample")
+        if self.training_run_id != build_training_run_id(
+            training_run_hash=self.training_run_hash
+        ):
+            raise ValueError("training_run_id must match training_run_hash")
+        if self.model_version_id != build_model_version_id(
+            model_version_hash=self.model_version_hash
+        ):
+            raise ValueError("model_version_id must match model_version_hash")
         expected_id = build_forecast_id(
+            dataset_snapshot_id=self.dataset_snapshot_id,
+            dataset_hash=self.dataset_hash,
             dataset_row_id=self.dataset_row_id,
             split=self.split,
             training_run_id=self.training_run_id,
+            training_run_hash=self.training_run_hash,
             model_version_id=self.model_version_id,
+            model_version_hash=self.model_version_hash,
             probabilities=self.probabilities,
             quantiles=self.quantiles,
             uncertainty=self.uncertainty,
@@ -134,8 +148,8 @@ class ProbabilisticCandidateOutput(ContractModel):
     training_run_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_version_id: CanonicalId
     model_version_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
-    forecast_ids: tuple[CanonicalId, ...]
-    forecasts: tuple[Forecast, ...]
+    forecast_ids: tuple[CanonicalId, ...] = Field(min_length=1)
+    forecasts: tuple[Forecast, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def output_identity_is_deterministic(self) -> Self:
@@ -148,8 +162,12 @@ class ProbabilisticCandidateOutput(ContractModel):
                 raise ValueError("forecast dataset_hash must match output")
             if forecast.training_run_id != self.training_run_id:
                 raise ValueError("forecast training_run_id must match output")
+            if forecast.training_run_hash != self.training_run_hash:
+                raise ValueError("forecast training_run_hash must match output")
             if forecast.model_version_id != self.model_version_id:
                 raise ValueError("forecast model_version_id must match output")
+            if forecast.model_version_hash != self.model_version_hash:
+                raise ValueError("forecast model_version_hash must match output")
         expected_hash = build_probabilistic_output_hash(
             dataset_snapshot_id=self.dataset_snapshot_id,
             dataset_hash=self.dataset_hash,
@@ -185,10 +203,14 @@ def build_model_version_id(*, model_version_hash: str) -> str:
 
 def build_forecast_id(
     *,
+    dataset_snapshot_id: str,
+    dataset_hash: str,
     dataset_row_id: str,
     split: DatasetSplit,
     training_run_id: str,
+    training_run_hash: str,
     model_version_id: str,
+    model_version_hash: str,
     probabilities: dict[str, Decimal],
     quantiles: tuple[ForecastQuantile, ...],
     uncertainty: Decimal,
@@ -200,11 +222,15 @@ def build_forecast_id(
         {
             "calibration_metadata": calibration_metadata,
             "calibration_status": calibration_status.value,
+            "dataset_hash": dataset_hash,
             "dataset_row_id": dataset_row_id,
+            "dataset_snapshot_id": dataset_snapshot_id,
+            "model_version_hash": model_version_hash,
             "model_version_id": model_version_id,
             "probabilities": {key: str(value) for key, value in sorted(probabilities.items())},
             "quantiles": tuple(_model_json(quantile) for quantile in quantiles),
             "split": split.value,
+            "training_run_hash": training_run_hash,
             "training_run_id": training_run_id,
             "uncertainty": str(uncertainty),
         },

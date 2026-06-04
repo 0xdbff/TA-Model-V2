@@ -16,11 +16,12 @@
 ## Acceptance evidence
 
 1. Added strict/frozen Pydantic forecast contracts in `src/ta_model/contracts/forecasts.py`.
-   - Rejects invalid probability sums/ranges, non-monotonic quantiles, non-finite uncertainty, in-sample train forecasts, missing calibration status, and mismatched output lineage.
+   - Rejects invalid probability sums/ranges, non-monotonic quantiles, non-finite uncertainty, in-sample train forecasts, missing calibration status, empty output artifacts, mismatched nested output lineage, and ID/hash lineage conflicts.
+   - Forecast identity binds dataset snapshot/hash, training run ID/hash, model version ID/hash, row ID, probabilities, quantiles, uncertainty, and calibration metadata.
 2. Added deterministic candidate trainer/scorer in `src/ta_model/training/probabilistic_candidate.py`.
-   - Fits probabilities, quantiles, and uncertainty from train-split labels only.
-   - Scores configured out-of-sample splits from the S7-001 `TrainingRunResult` lineage.
-3. Added tests in `tests/test_probabilistic_candidate.py` for deterministic outputs, dataset/config/commit/seed identity changes, invalid contract rejection, out-of-sample enforcement, and train-only/no-lookahead behavior.
+   - Fits probabilities, quantiles, and uncertainty from train-split labels only, conditioned by point-in-time `one_bar_return` feature sequences.
+   - Scores configured out-of-sample splits from feature sequences available at or before each row `feature_ts` and S7-001 `TrainingRunResult` lineage.
+3. Added tests in `tests/test_probabilistic_candidate.py` for deterministic outputs, dataset/config/commit/seed identity changes, invalid contract rejection, lineage conflict rejection even with rebuilt IDs/hashes, out-of-sample enforcement, feature-conditional scoring, and train-only/no-lookahead behavior.
 
 ## Docker/runtime impact
 
@@ -39,11 +40,11 @@
 
 - `uv run ruff check .` — PASS.
 - `uv run mypy src tests` — PASS.
-- `uv run pytest tests/test_training_runner.py tests/test_probabilistic_candidate.py tests/test_dataset_snapshot_builder.py tests/test_s4_leakage_parity.py` — PASS, 30 tests.
+- `uv run pytest tests/test_training_runner.py tests/test_probabilistic_candidate.py tests/test_dataset_snapshot_builder.py tests/test_s4_leakage_parity.py` — PASS, 32 tests.
 - `uv run pytest` — PASS, 227 tests.
 
 ## Assumptions and downstream notes
 
-- The first candidate is a deterministic train-prior sequence/distribution baseline, intentionally small and dependency-free.
+- The first candidate is a deterministic feature-sequence-conditioned distribution baseline, intentionally small and dependency-free.
 - #34 can consume `Forecast` and `ProbabilisticCandidateOutput` for model/evaluation gate reports.
-- Calibration status is `train_prior_only`; no claim of promotion readiness or calibrated production model quality is made.
+- Calibration status is `sequence_conditioned_train_only`; no claim of promotion readiness or calibrated production model quality is made.
