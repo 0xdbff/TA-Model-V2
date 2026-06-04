@@ -35,10 +35,11 @@ def replay_ohlctv_market_orders(
 ) -> ReplayReport:
     """Replay market order intents against validated event-time OHLCTV bars.
 
-    Bars must already be deterministically ordered by instrument, venue, timeframe,
-    and close_ts. For an order submitted when bar N becomes available, bar N is not
-    eligible for filling; the earliest fill is the next bar whose open_ts is at or
-    after submitted_at and whose close_ts is after submitted_at.
+    Bars must already be deterministically ordered by event-time availability:
+    close_ts, instrument, venue, and timeframe. For an order submitted when bar N
+    becomes available, bar N is not eligible for filling; the earliest fill is the
+    next bar whose open_ts is at or after submitted_at and whose close_ts is after
+    submitted_at.
     """
 
     bar_tuple = tuple(bars)
@@ -129,18 +130,29 @@ def _unfilled_result(*, intent: OrderIntent, reason: ReplayRejectReason) -> Repl
 def _validate_bars_are_safe(bars: tuple[OHLCTVBar, ...]) -> None:
     seen_close_keys: set[tuple[str, str, str, str]] = set()
     last_by_stream: dict[tuple[str, str, str], OHLCTVBar] = {}
+    timeframes_by_market: dict[tuple[str, str], set[str]] = {}
     previous_global_key: tuple[str, str, str, str] | None = None
     for bar in bars:
+        if bar.source_ts > bar.close_ts:
+            raise ReplayBuildError("OHLCTV source_ts must not be after close_ts for replay")
+
         stream_key = (bar.instrument_id, bar.venue_id, bar.timeframe)
+        market_key = (bar.instrument_id, bar.venue_id)
+        timeframes_by_market.setdefault(market_key, set()).add(bar.timeframe)
+        if len(timeframes_by_market[market_key]) > 1:
+            raise ReplayBuildError(
+                "mixed OHLCTV timeframes for one instrument/venue are ambiguous for replay"
+            )
+
         close_key = (*stream_key, bar.close_ts.isoformat())
         if close_key in seen_close_keys:
             raise ReplayBuildError("duplicate OHLCTV bars per instrument/venue/timeframe/close_ts")
         seen_close_keys.add(close_key)
 
-        global_key = (*stream_key, bar.close_ts.isoformat())
+        global_key = (bar.close_ts.isoformat(), *stream_key)
         if previous_global_key is not None and global_key < previous_global_key:
             raise ReplayBuildError(
-                "OHLCTV bars must be sorted by instrument/venue/timeframe/close_ts"
+                "OHLCTV bars must be sorted by close_ts/instrument/venue/timeframe"
             )
         previous_global_key = global_key
 
