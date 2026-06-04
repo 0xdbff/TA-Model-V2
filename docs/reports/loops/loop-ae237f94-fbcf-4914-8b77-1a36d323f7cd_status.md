@@ -106,6 +106,8 @@ Additional focused checks expected:
 - Independent QA re-reviews approved #30 after required-scenario and traceability contract hardening.
 - Loop validation after #30 merge: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 213 tests.
 - Final integration blocker fix validation: `uv run ruff check .` passed; `uv run mypy src tests` passed; `uv run pytest` passed with 215 tests.
+- Final independent integration re-review passed after the non-causal order-intent guard fix.
+- Final Docker/runtime check: `git diff --name-only origin/dev...HEAD` shows only docs, Python source, and tests changed; no Dockerfile, Compose, dependency, datastore, broker, image, or runtime-service changes.
 
 ## Human-sync decisions
 
@@ -114,4 +116,4 @@ None yet.
 ## Remaining blockers
 
 - No S6 sub-agent blockers remain.
-- Docker/runtime checks remain before final PR readiness; final blocker fix validation passed with no runtime/dependency changes.
+- Final integration PR is ready to open from the loop branch to `dev`; do not merge to `dev` without policy/human authorization.
