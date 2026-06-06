@@ -1,0 +1,20 @@
+{
+  "target_schema": "InstrumentConstraint",
+  "expected_error_substrings": ["min_notional"],
+  "payload": {
+    "schema_version": "instrument-constraint.v1",
+    "constraint_id": "COINBASE_SPOT:BTC-USD:CONSTRAINTS:2026Q1",
+    "instrument_id": "COINBASE_SPOT:BTC-USD",
+    "tick_size": "0.01",
+    "lot_size": "0.00000001",
+    "min_notional": "0",
+    "min_order_quantity": "0.00000001",
+    "max_order_quantity": null,
+    "max_order_notional": null,
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "source_id": "FIXTURE_S1_002",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}

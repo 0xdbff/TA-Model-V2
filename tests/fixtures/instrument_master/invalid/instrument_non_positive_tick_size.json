@@ -1,0 +1,29 @@
+{
+  "target_schema": "Instrument",
+  "expected_error_substrings": ["tick_size"],
+  "payload": {
+    "schema_version": "instrument.v1",
+    "instrument_id": "COINBASE_SPOT:BTC-USD",
+    "venue_id": "COINBASE_SPOT",
+    "base_asset_id": "BTC",
+    "quote_asset_id": "USD",
+    "venue_symbol": "BTC-USD",
+    "canonical_symbol": "BTC-USD",
+    "instrument_type": "spot",
+    "status": "trading",
+    "tick_size": "0",
+    "lot_size": "0.00000001",
+    "min_notional": "1.00",
+    "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES",
+    "supported_order_types": ["market", "limit"],
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "is_derivative": false,
+    "margin_allowed": false,
+    "short_selling_allowed": false,
+    "leverage_allowed": false,
+    "source_id": "FIXTURE_S1_001",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}

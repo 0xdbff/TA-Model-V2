@@ -1,0 +1,148 @@
+{
+  "target_schema": "InstrumentMasterSnapshot",
+  "expected_error_substrings": ["unknown asset_id"],
+  "payload": {
+    "schema_version": "instrument-master.v1",
+    "snapshot_id": "S1_001_MISSING_ASSET_FIXTURE",
+    "created_at": "2026-01-01T00:00:00Z",
+    "source_id": "FIXTURE_S1_001",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z",
+    "assets": [
+      {
+        "schema_version": "asset.v1",
+        "asset_id": "USD",
+        "symbol": "USD",
+        "name": "United States Dollar",
+        "asset_type": "fiat",
+        "classifications": ["fiat"],
+        "issuer": "Federal Reserve System",
+        "category": "cash",
+        "status": "active",
+        "source_id": "FIXTURE_S1_001",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "venues": [
+      {
+        "schema_version": "venue.v1",
+        "venue_id": "COINBASE_SPOT",
+        "name": "Coinbase Spot Fixture Venue",
+        "venue_type": "exchange",
+        "timezone": "UTC",
+        "api_endpoint_group": {
+          "group_id": "COINBASE_SPOT_PUBLIC",
+          "rest_base_url": "https://api.exchange.coinbase.com",
+          "websocket_url": "wss://ws-feed.exchange.coinbase.com",
+          "status_url": "https://status.coinbase.com",
+          "documentation_url": "https://docs.cdp.coinbase.com/exchange/"
+        },
+        "status": "active",
+        "rate_limits": [
+          {
+            "rate_limit_id": "COINBASE_SPOT_REST_METADATA",
+            "scope": "metadata",
+            "limit": 10,
+            "interval_seconds": 1,
+            "burst_limit": 15
+          }
+        ],
+        "supported_order_types": ["market", "limit"],
+        "source_id": "FIXTURE_S1_001",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "fee_schedules": [
+      {
+        "schema_version": "fee-schedule.v1",
+        "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES_2026Q1",
+        "venue_id": "COINBASE_SPOT",
+        "fee_tier_id": "COINBASE_SPOT_STANDARD_FEES",
+        "maker_fee_rate": "0.0060",
+        "taker_fee_rate": "0.0060",
+        "fee_asset_id": "USD",
+        "min_fee": "0",
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "source_id": "FIXTURE_S1_002",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "trading_sessions": [
+      {
+        "schema_version": "trading-session.v1",
+        "session_id": "COINBASE_SPOT_24X7_2026Q1",
+        "venue_id": "COINBASE_SPOT",
+        "name": "Coinbase Spot 24x7 Fixture Session",
+        "timezone": "UTC",
+        "days_of_week": [
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday"
+        ],
+        "is_24x7": true,
+        "open_time": null,
+        "close_time": null,
+        "status": "active",
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "source_id": "FIXTURE_S1_002",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "instrument_constraints": [
+      {
+        "schema_version": "instrument-constraint.v1",
+        "constraint_id": "COINBASE_SPOT:BTC-USD:CONSTRAINTS:2026Q1",
+        "instrument_id": "COINBASE_SPOT:BTC-USD",
+        "tick_size": "0.01",
+        "lot_size": "0.00000001",
+        "min_notional": "1.00",
+        "min_order_quantity": "0.00000001",
+        "max_order_quantity": null,
+        "max_order_notional": null,
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "source_id": "FIXTURE_S1_002",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "instruments": [
+      {
+        "schema_version": "instrument.v1",
+        "instrument_id": "COINBASE_SPOT:BTC-USD",
+        "venue_id": "COINBASE_SPOT",
+        "base_asset_id": "BTC",
+        "quote_asset_id": "USD",
+        "venue_symbol": "BTC-USD",
+        "canonical_symbol": "BTC-USD",
+        "instrument_type": "spot",
+        "status": "trading",
+        "tick_size": "0.01",
+        "lot_size": "0.00000001",
+        "min_notional": "1.00",
+        "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES_2026Q1",
+        "supported_order_types": ["market", "limit"],
+        "effective_from": "2026-01-01T00:00:00Z",
+        "effective_to": null,
+        "is_derivative": false,
+        "margin_allowed": false,
+        "short_selling_allowed": false,
+        "leverage_allowed": false,
+        "source_id": "FIXTURE_S1_001",
+        "source_version": "v1",
+        "metadata_ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "accounts": []
+  }
+}

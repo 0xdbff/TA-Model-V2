@@ -13,6 +13,7 @@ This repository contains a complete project model for a validation-first, asset-
 | `05_metrics_validation_matrix.csv` | Validation metrics, thresholds, owners, and promotion gates. |
 | `06_architecture.mmd` | Mermaid architecture diagram. |
 | `07_data_contracts.md` | Data schemas, quality gates, lineage, and retention plan. |
+| `source_license_register.csv` | Source/license register template and initial candidate-source review rows. |
 | `08_mvp_backlog.md` | MVP scope, delivery phases, and P0 backlog. |
 | `09_references.md` | Regulatory and risk-management references used for control design. |
 | `10_implementation_roadmap.md` | Staged implementation roadmap, sprint sequence, validation strategy, QA strategy, and integration strategy. |

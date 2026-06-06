@@ -1,0 +1,19 @@
+{
+  "target_schema": "FeeSchedule",
+  "expected_error_substrings": ["taker_fee_rate"],
+  "payload": {
+    "schema_version": "fee-schedule.v1",
+    "fee_schedule_id": "COINBASE_SPOT_STANDARD_FEES_2026Q1",
+    "venue_id": "COINBASE_SPOT",
+    "fee_tier_id": "COINBASE_SPOT_STANDARD_FEES",
+    "maker_fee_rate": "0.0060",
+    "taker_fee_rate": "-0.0010",
+    "fee_asset_id": "USD",
+    "min_fee": "0",
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "source_id": "FIXTURE_S1_002",
+    "source_version": "v1",
+    "metadata_ts": "2026-01-01T00:00:00Z"
+  }
+}

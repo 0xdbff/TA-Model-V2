@@ -1,0 +1,49 @@
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.6
+    profiles: ["stream"]
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    volumes:
+      - redpanda_stream_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "--brokers=redpanda:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  stream-smoke:
+    build:
+      context: .
+      dockerfile: docker/stream-smoke/Dockerfile
+    image: ta-model-v2-stream-smoke:s3-004
+    profiles: ["stream"]
+    entrypoint: ["/bin/sh", "-ec"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    volumes:
+      - ./tests/fixtures/stream/stream_profile_events.jsonl:/fixtures/stream_profile_events.jsonl:ro
+    command:
+      - |
+        rpk topic create stream.fixture.events --brokers=redpanda:9092 || true
+        rpk topic produce stream.fixture.events --brokers=redpanda:9092 < /fixtures/stream_profile_events.jsonl
+        rpk topic consume stream.fixture.events --brokers=redpanda:9092 --offset=start --num=4 --format='%v\n' > /tmp/consumed.jsonl
+        test "$(wc -l < /tmp/consumed.jsonl | tr -d ' ')" = "4"
+        python scripts/stream_profile_fixture_smoke.py --input /tmp/consumed.jsonl --output /tmp/stream-smoke.json
+        printf 'stream profile smoke passed: produced, consumed, and contract-validated 4 fixture-only events\n'
+
+volumes:
+  redpanda_stream_data:
