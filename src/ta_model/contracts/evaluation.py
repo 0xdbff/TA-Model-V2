@@ -18,10 +18,11 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from ta_model.contracts.baselines import BaselineKind
 from ta_model.contracts.datasets import DatasetSplit
+from ta_model.contracts.decisions import StrategyDecisionReasonCount
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
 
 
@@ -160,6 +161,74 @@ class BaselineGateDecision(ContractModel):
         return self
 
 
+class StrategyGateUtilityObservation(ContractModel):
+    """Realized utility input aligned to one StrategyDecision."""
+
+    decision_id: CanonicalId
+    realized_return: Decimal
+    cash_return: Decimal = Decimal("0")
+    source: NonEmptyString = "deterministic_fixture_realized_forward_return"
+
+    @field_validator("realized_return", "cash_return")
+    @classmethod
+    def utility_decimals_are_finite(cls, value: Decimal) -> Decimal:
+        if not value.is_finite():
+            raise ValueError("strategy gate utility decimals must be finite")
+        return value
+
+
+class StrategyGateReport(ContractModel):
+    """Deterministic S8 strategy-quality report from real decisions."""
+
+    report_id: CanonicalId
+    report_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    input_decision_ids: tuple[CanonicalId, ...]
+    input_decision_hashes: tuple[str, ...]
+    observation_count: int = Field(gt=0)
+    taken_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    taken_mean_utility: Decimal
+    skipped_mean_opportunity_utility: Decimal
+    skipped_vs_taken_mean_utility: Decimal
+    turnover_proxy_notional: Decimal = Field(ge=Decimal("0"))
+    cost_drag_notional: Decimal = Field(ge=Decimal("0"))
+    reason_counts: tuple[StrategyDecisionReasonCount, ...]
+    utility_observations: tuple[StrategyGateUtilityObservation, ...]
+    requirement_ids: tuple[NonEmptyString, ...] = ("FR-009", "FR-014")
+    caveats: tuple[NonEmptyString, ...] = (
+        "S8 strategy gate consumes StrategyDecision proposals only; it does not approve risk.",
+        "Turnover and cost drag are pre-risk proposal proxies, not gateway fills or TCA.",
+    )
+
+    @field_validator(
+        "taken_mean_utility",
+        "skipped_mean_opportunity_utility",
+        "skipped_vs_taken_mean_utility",
+        "turnover_proxy_notional",
+        "cost_drag_notional",
+    )
+    @classmethod
+    def strategy_gate_decimals_are_finite(cls, value: Decimal) -> Decimal:
+        if not value.is_finite():
+            raise ValueError("strategy gate report decimals must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def strategy_gate_report_identity_is_deterministic(self) -> Self:
+        if self.observation_count != len(self.input_decision_ids):
+            raise ValueError("observation_count must match input decisions")
+        if self.observation_count != len(self.utility_observations):
+            raise ValueError("observation_count must match utility observations")
+        if self.taken_count + self.skipped_count != self.observation_count:
+            raise ValueError("taken_count plus skipped_count must equal observation_count")
+        expected_hash = build_strategy_gate_report_hash(report=self)
+        if self.report_hash != expected_hash:
+            raise ValueError("strategy gate report_hash is not deterministic")
+        if self.report_id != build_strategy_gate_report_id(report_hash=self.report_hash):
+            raise ValueError("strategy gate report_id is not deterministic")
+        return self
+
+
 def build_scorecard_hash(
     *,
     input_baseline_report_ids: tuple[str, ...],
@@ -181,6 +250,35 @@ def build_scorecard_hash(
 
 def build_scorecard_id(*, scorecard_hash: str) -> str:
     return _stable_id("EVALSCORECARD", {"scorecard_hash": scorecard_hash})
+
+
+def build_strategy_gate_report_hash(*, report: StrategyGateReport) -> str:
+    return _hash(
+        {
+            "caveats": report.caveats,
+            "cost_drag_notional": str(report.cost_drag_notional),
+            "input_decision_hashes": report.input_decision_hashes,
+            "input_decision_ids": report.input_decision_ids,
+            "observation_count": report.observation_count,
+            "reason_counts": tuple(_model_json(count) for count in report.reason_counts),
+            "requirement_ids": report.requirement_ids,
+            "skipped_count": report.skipped_count,
+            "skipped_mean_opportunity_utility": str(
+                report.skipped_mean_opportunity_utility
+            ),
+            "skipped_vs_taken_mean_utility": str(report.skipped_vs_taken_mean_utility),
+            "taken_count": report.taken_count,
+            "taken_mean_utility": str(report.taken_mean_utility),
+            "turnover_proxy_notional": str(report.turnover_proxy_notional),
+            "utility_observations": tuple(
+                _model_json(observation) for observation in report.utility_observations
+            ),
+        }
+    )
+
+
+def build_strategy_gate_report_id(*, report_hash: str) -> str:
+    return _stable_id("STRATEGYGATE", {"report_hash": report_hash})
 
 
 def _stable_id(prefix: str, payload: object) -> str:
