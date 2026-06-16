@@ -3,6 +3,8 @@
 Traceability:
 - FR-009: decision objects include expected return, expected cost, net edge,
   uncertainty, and machine-readable reason codes for trade and no-trade paths.
+- FR-010: deterministic pre-risk sizing proposals carry risk-budget inputs without
+  claiming independent risk approval.
 - FR-015/NFR-004: deterministic IDs, hashes, trace IDs, and forecast lineage make
   decisions auditable and replay-ready.
 
@@ -40,6 +42,7 @@ class StrategyDecisionReasonCode(StrEnum):
     INSUFFICIENT_NET_EDGE = "insufficient_net_edge"
     COST_THRESHOLD = "cost_threshold"
     UNCERTAINTY_THRESHOLD = "uncertainty_threshold"
+    DRAWDOWN_THRESHOLD = "drawdown_threshold"
     NON_POSITIVE_EXPECTED_RETURN = "non_positive_expected_return"
     UNSUPPORTED_FORECAST = "unsupported_forecast"
 
@@ -51,15 +54,54 @@ class ExpectedReturnSource(StrEnum):
 
 
 class StrategySizingStatus(StrEnum):
-    """Sizing state before S8-003 sizing and S9 independent risk approval."""
+    """Pre-risk sizing state before S9 independent risk approval."""
 
     PLACEHOLDER_PENDING_RISK = "placeholder_pending_independent_risk"
+    PROPOSED_PENDING_INDEPENDENT_RISK = "proposed_pending_independent_risk"
+    BLOCKED_BEFORE_INDEPENDENT_RISK = "blocked_before_independent_risk"
+
+
+class StrategySizingReasonCode(StrEnum):
+    """Machine-readable audit reasons for pre-risk sizing proposals."""
+
+    NO_SIZING_INPUTS = "no_sizing_inputs"
+    NO_TRADE_ACTION = "no_trade_action"
+    POSITIVE_PRE_RISK_SIZE = "positive_pre_risk_size"
+    ZERO_RISK_BUDGET = "zero_risk_budget"
+    COST_REDUCTION = "cost_reduction"
+    COST_BLOCK = "cost_block"
+    UNCERTAINTY_REDUCTION = "uncertainty_reduction"
+    UNCERTAINTY_BLOCK = "uncertainty_block"
+    DRAWDOWN_REDUCTION = "drawdown_reduction"
+    DRAWDOWN_BLOCK = "drawdown_block"
 
 
 class StrategyRiskApprovalStatus(StrEnum):
     """Risk approval state carried by S8 decisions without approving risk."""
 
     NOT_EVALUATED = "not_evaluated"
+
+
+class StrategySizingInputs(ContractModel):
+    """Explicit deterministic inputs for S8 pre-risk sizing proposals."""
+
+    risk_budget_notional: Decimal = Field(ge=Decimal("0"))
+    reference_price: Decimal = Field(gt=Decimal("0"))
+    current_drawdown: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    max_drawdown: Decimal = Field(gt=Decimal("0"))
+    requirement_ids: tuple[NonEmptyString, ...] = ("FR-009", "FR-010")
+
+    @field_validator(
+        "risk_budget_notional",
+        "reference_price",
+        "current_drawdown",
+        "max_drawdown",
+    )
+    @classmethod
+    def sizing_input_decimals_are_finite(cls, value: Decimal) -> Decimal:
+        if not value.is_finite():
+            raise ValueError("strategy sizing input decimals must be finite")
+        return value
 
 
 class StrategyDecisionPolicy(ContractModel):
@@ -105,6 +147,11 @@ class StrategySizingProposal(ContractModel):
     """Sizing placeholder carried to future sizing/risk work without approval."""
 
     sizing_status: StrategySizingStatus = StrategySizingStatus.PLACEHOLDER_PENDING_RISK
+    sizing_inputs: StrategySizingInputs | None = None
+    sizing_reason_codes: tuple[StrategySizingReasonCode, ...] = (
+        StrategySizingReasonCode.NO_SIZING_INPUTS,
+    )
+    pre_risk_multiplier: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("1"))
     proposed_notional: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     proposed_quantity: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     approved_notional: Decimal | None = Field(default=None, ge=Decimal("0"))
@@ -115,6 +162,7 @@ class StrategySizingProposal(ContractModel):
     @field_validator(
         "proposed_notional",
         "proposed_quantity",
+        "pre_risk_multiplier",
         "approved_notional",
         "approved_quantity",
     )
@@ -126,6 +174,8 @@ class StrategySizingProposal(ContractModel):
 
     @model_validator(mode="after")
     def s8_does_not_approve_risk(self) -> Self:
+        if not self.sizing_reason_codes:
+            raise ValueError("sizing proposals require at least one reason code")
         if (
             self.approved_notional is not None
             or self.approved_quantity is not None
@@ -133,6 +183,26 @@ class StrategySizingProposal(ContractModel):
             or self.risk_approval_status is not StrategyRiskApprovalStatus.NOT_EVALUATED
         ):
             raise ValueError("S8 decisions must not carry independent risk approval")
+        has_positive_size = self.proposed_notional > 0 and self.proposed_quantity > 0
+        has_zero_size = self.proposed_notional == 0 and self.proposed_quantity == 0
+        if not has_positive_size and not has_zero_size:
+            raise ValueError("proposed notional and quantity must both be zero or both positive")
+        if self.sizing_inputs is None:
+            if has_positive_size:
+                raise ValueError("positive pre-risk sizing requires explicit sizing inputs")
+            if self.sizing_status is not StrategySizingStatus.PLACEHOLDER_PENDING_RISK:
+                raise ValueError("missing sizing inputs require placeholder sizing status")
+            if self.sizing_reason_codes != (StrategySizingReasonCode.NO_SIZING_INPUTS,):
+                raise ValueError("missing sizing inputs require no_sizing_inputs reason")
+        elif StrategySizingReasonCode.NO_SIZING_INPUTS in self.sizing_reason_codes:
+            raise ValueError("explicit sizing inputs cannot use no_sizing_inputs reason")
+        if self.sizing_status is StrategySizingStatus.PROPOSED_PENDING_INDEPENDENT_RISK:
+            if not has_positive_size:
+                raise ValueError("proposed sizing status requires positive proposed size")
+            if self.pre_risk_multiplier <= 0:
+                raise ValueError("positive proposed size requires positive pre-risk multiplier")
+        elif has_positive_size:
+            raise ValueError("positive proposed size requires proposed pending risk status")
         return self
 
 
@@ -209,6 +279,16 @@ class StrategyDecision(ContractModel):
                 raise ValueError("buy decisions require trade_positive_net_edge reason")
             if self.expected_return <= 0 or self.net_edge <= 0:
                 raise ValueError("buy decisions require positive expected return and net edge")
+            if self.sizing.sizing_inputs is not None:
+                if (
+                    self.sizing.sizing_status
+                    is not StrategySizingStatus.PROPOSED_PENDING_INDEPENDENT_RISK
+                    or self.sizing.proposed_notional <= 0
+                    or self.sizing.proposed_quantity <= 0
+                ):
+                    raise ValueError(
+                        "buy decisions with sizing inputs require positive proposed size"
+                    )
         else:
             if self.reason_code is StrategyDecisionReasonCode.TRADE_POSITIVE_NET_EDGE:
                 raise ValueError("no-trade decisions require a no-trade reason")
