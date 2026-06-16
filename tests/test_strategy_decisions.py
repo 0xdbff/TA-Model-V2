@@ -16,6 +16,11 @@ from ta_model.contracts.decisions import (
     StrategyDecisionAction,
     StrategyDecisionPolicy,
     StrategyDecisionReasonCode,
+    StrategyRiskApprovalStatus,
+    StrategySizingInputs,
+    StrategySizingProposal,
+    StrategySizingReasonCode,
+    StrategySizingStatus,
     build_strategy_decision_hash,
     build_strategy_decision_id,
     make_strategy_decision_policy,
@@ -124,6 +129,21 @@ def _policy(
     )
 
 
+def _sizing_inputs(
+    *,
+    risk_budget_notional: str = "10000",
+    reference_price: str = "100",
+    current_drawdown: str = "0",
+    max_drawdown: str = "0.20",
+) -> StrategySizingInputs:
+    return StrategySizingInputs(
+        risk_budget_notional=Decimal(risk_budget_notional),
+        reference_price=Decimal(reference_price),
+        current_drawdown=Decimal(current_drawdown),
+        max_drawdown=Decimal(max_drawdown),
+    )
+
+
 def _decision(
     *,
     median: str = "0.020",
@@ -131,12 +151,14 @@ def _decision(
     policy: StrategyDecisionPolicy | None = None,
     strategy_run_id: str = "STRATEGYRUN:S8-DECISION",
     quantiles: tuple[ForecastQuantile, ...] | None = None,
+    sizing_inputs: StrategySizingInputs | None = None,
 ) -> StrategyDecision:
     return decide_expected_net_edge(
         forecast=_forecast(median=median, uncertainty=uncertainty, quantiles=quantiles),
         policy=policy or _policy(),
         strategy_run_id=strategy_run_id,
         decision_ts=START + timedelta(minutes=1),
+        sizing_inputs=sizing_inputs,
     )
 
 
@@ -159,7 +181,9 @@ def test_public_contract_and_strategy_exports_convert_forecast_to_decision() -> 
 
     assert isinstance(decision, public_contracts.StrategyDecision)
     assert public_contracts.StrategyDecisionPolicy is StrategyDecisionPolicy
+    assert public_contracts.StrategySizingInputs is StrategySizingInputs
     assert decision.action is public_contracts.StrategyDecisionAction.BUY
+    assert public_strategy.propose_pre_risk_size is not None
     assert public_strategy.summarize_decision_reason_codes((decision,))[0].count == 1
 
 
@@ -254,6 +278,253 @@ def test_positive_expected_net_edge_creates_trade_action() -> None:
     assert decision.action is StrategyDecisionAction.BUY
     assert decision.reason_code is StrategyDecisionReasonCode.TRADE_POSITIVE_NET_EDGE
     assert decision.net_edge == Decimal("0.0430")
+
+
+def test_explicit_risk_budget_inputs_create_positive_pre_risk_size() -> None:
+    decision = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+
+    assert decision.action is StrategyDecisionAction.BUY
+    assert decision.sizing.sizing_status is StrategySizingStatus.PROPOSED_PENDING_INDEPENDENT_RISK
+    assert decision.sizing.proposed_notional == Decimal("10000")
+    assert decision.sizing.proposed_quantity == Decimal("100")
+    assert decision.sizing.pre_risk_multiplier == Decimal("1")
+    assert decision.sizing.sizing_reason_codes == (
+        StrategySizingReasonCode.POSITIVE_PRE_RISK_SIZE,
+    )
+    assert decision.sizing.risk_approval_status is StrategyRiskApprovalStatus.NOT_EVALUATED
+    assert decision.sizing.approved_notional is None
+    assert decision.sizing.approved_quantity is None
+    assert decision.sizing.risk_approval_id is None
+    assert "FR-010" in decision.requirement_ids
+
+
+def test_zero_cost_or_uncertainty_threshold_allows_zero_value_trade() -> None:
+    zero_cost_threshold = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0", max_expected_cost="0"),
+        sizing_inputs=_sizing_inputs(),
+    )
+    zero_uncertainty_threshold = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0", max_expected_cost="0.004", max_uncertainty="0"),
+        sizing_inputs=_sizing_inputs(),
+    )
+
+    assert zero_cost_threshold.action is StrategyDecisionAction.BUY
+    assert zero_cost_threshold.reason_code is StrategyDecisionReasonCode.TRADE_POSITIVE_NET_EDGE
+    assert zero_cost_threshold.sizing.proposed_notional == Decimal("10000")
+    assert zero_cost_threshold.sizing.sizing_status is (
+        StrategySizingStatus.PROPOSED_PENDING_INDEPENDENT_RISK
+    )
+    assert zero_uncertainty_threshold.action is StrategyDecisionAction.BUY
+    assert zero_uncertainty_threshold.reason_code is (
+        StrategyDecisionReasonCode.TRADE_POSITIVE_NET_EDGE
+    )
+    assert zero_uncertainty_threshold.sizing.proposed_notional == Decimal("10000")
+    assert zero_uncertainty_threshold.sizing.sizing_status is (
+        StrategySizingStatus.PROPOSED_PENDING_INDEPENDENT_RISK
+    )
+
+
+def test_uncertainty_reduces_pre_risk_size_without_risk_approval() -> None:
+    policy = _policy(expected_cost="0", max_expected_cost="0.004", max_uncertainty="0.040")
+    low_uncertainty = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(),
+    )
+    high_uncertainty = _decision(
+        median="0.050",
+        uncertainty="0.020",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(),
+    )
+    blocked_uncertainty = _decision(
+        median="0.100",
+        uncertainty="0.050",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(),
+    )
+    threshold_uncertainty = _decision(
+        median="0.100",
+        uncertainty="0.040",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(),
+    )
+
+    assert high_uncertainty.action is StrategyDecisionAction.BUY
+    assert low_uncertainty.sizing.proposed_notional == Decimal("10000")
+    assert high_uncertainty.sizing.pre_risk_multiplier == Decimal("0.5")
+    assert high_uncertainty.sizing.proposed_notional == Decimal("5000.0")
+    assert high_uncertainty.sizing.proposed_notional < low_uncertainty.sizing.proposed_notional
+    assert (
+        StrategySizingReasonCode.UNCERTAINTY_REDUCTION
+        in high_uncertainty.sizing.sizing_reason_codes
+    )
+    assert high_uncertainty.sizing.risk_approval_id is None
+    assert blocked_uncertainty.action is StrategyDecisionAction.NO_TRADE
+    assert blocked_uncertainty.reason_code is StrategyDecisionReasonCode.UNCERTAINTY_THRESHOLD
+    assert blocked_uncertainty.sizing.proposed_notional == 0
+    assert blocked_uncertainty.sizing.proposed_quantity == 0
+    assert blocked_uncertainty.sizing.sizing_reason_codes == (
+        StrategySizingReasonCode.UNCERTAINTY_BLOCK,
+    )
+    assert threshold_uncertainty.action is StrategyDecisionAction.NO_TRADE
+    assert threshold_uncertainty.reason_code is StrategyDecisionReasonCode.UNCERTAINTY_THRESHOLD
+    assert threshold_uncertainty.sizing.proposed_notional == 0
+    assert threshold_uncertainty.sizing.proposed_quantity == 0
+    assert threshold_uncertainty.sizing.sizing_reason_codes == (
+        StrategySizingReasonCode.UNCERTAINTY_BLOCK,
+    )
+
+
+def test_cost_reduces_or_blocks_pre_risk_size() -> None:
+    base = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+    reduced = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0.002", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+    blocked = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0.010", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+    threshold = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0.004", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+
+    assert reduced.sizing.proposed_notional == Decimal("5000.0")
+    assert reduced.sizing.proposed_notional < base.sizing.proposed_notional
+    assert StrategySizingReasonCode.COST_REDUCTION in reduced.sizing.sizing_reason_codes
+    assert blocked.action is StrategyDecisionAction.NO_TRADE
+    assert blocked.reason_code is StrategyDecisionReasonCode.COST_THRESHOLD
+    assert blocked.sizing.sizing_status is StrategySizingStatus.BLOCKED_BEFORE_INDEPENDENT_RISK
+    assert blocked.sizing.proposed_notional == 0
+    assert blocked.sizing.proposed_quantity == 0
+    assert blocked.sizing.sizing_reason_codes == (StrategySizingReasonCode.COST_BLOCK,)
+    assert threshold.action is StrategyDecisionAction.NO_TRADE
+    assert threshold.reason_code is StrategyDecisionReasonCode.COST_THRESHOLD
+    assert threshold.sizing.proposed_notional == 0
+    assert threshold.sizing.proposed_quantity == 0
+    assert threshold.sizing.sizing_reason_codes == (StrategySizingReasonCode.COST_BLOCK,)
+
+
+def test_drawdown_reduces_or_blocks_pre_risk_size() -> None:
+    policy = _policy(expected_cost="0", max_expected_cost="0.004", max_uncertainty="0.040")
+    base = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(),
+    )
+    reduced = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(current_drawdown="0.10", max_drawdown="0.20"),
+    )
+    blocked = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=policy,
+        sizing_inputs=_sizing_inputs(current_drawdown="0.20", max_drawdown="0.20"),
+    )
+
+    assert reduced.action is StrategyDecisionAction.BUY
+    assert reduced.sizing.pre_risk_multiplier == Decimal("0.5")
+    assert reduced.sizing.proposed_notional == Decimal("5000.0")
+    assert reduced.sizing.proposed_notional < base.sizing.proposed_notional
+    assert StrategySizingReasonCode.DRAWDOWN_REDUCTION in reduced.sizing.sizing_reason_codes
+    assert blocked.action is StrategyDecisionAction.NO_TRADE
+    assert blocked.reason_code is StrategyDecisionReasonCode.DRAWDOWN_THRESHOLD
+    assert blocked.sizing.sizing_status is StrategySizingStatus.BLOCKED_BEFORE_INDEPENDENT_RISK
+    assert blocked.sizing.proposed_notional == 0
+    assert blocked.sizing.proposed_quantity == 0
+    assert blocked.sizing.sizing_reason_codes == (StrategySizingReasonCode.DRAWDOWN_BLOCK,)
+
+
+def test_no_trade_and_blocked_decisions_keep_proposed_size_zero() -> None:
+    insufficient_edge = _decision(median="0.003", sizing_inputs=_sizing_inputs())
+    cost_block = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0.010", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+    drawdown_block = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(current_drawdown="0.25", max_drawdown="0.20"),
+    )
+
+    for decision in (insufficient_edge, cost_block, drawdown_block):
+        assert decision.action is StrategyDecisionAction.NO_TRADE
+        assert decision.sizing.proposed_notional == 0
+        assert decision.sizing.proposed_quantity == 0
+        assert decision.sizing.risk_approval_status is StrategyRiskApprovalStatus.NOT_EVALUATED
+        assert decision.sizing.risk_approval_id is None
+
+
+def test_sizing_proposal_rejects_risk_approval_fields() -> None:
+    with pytest.raises(ValidationError, match="must not carry independent risk approval"):
+        StrategySizingProposal(approved_notional=Decimal("1"))
+
+    with pytest.raises(ValidationError, match="must not carry independent risk approval"):
+        StrategySizingProposal(approved_quantity=Decimal("1"))
+
+    with pytest.raises(ValidationError, match="must not carry independent risk approval"):
+        StrategySizingProposal(risk_approval_id="RISKAPPROVAL:S8-SHOULD-NOT-EXIST")
+
+
+def test_buy_decision_with_explicit_sizing_inputs_rejects_zero_proposed_size() -> None:
+    decision = _decision(
+        median="0.050",
+        uncertainty="0.000",
+        policy=_policy(expected_cost="0", max_expected_cost="0.004"),
+        sizing_inputs=_sizing_inputs(),
+    )
+    zero_size = StrategySizingProposal(
+        sizing_status=StrategySizingStatus.BLOCKED_BEFORE_INDEPENDENT_RISK,
+        sizing_inputs=_sizing_inputs(),
+        sizing_reason_codes=(StrategySizingReasonCode.COST_BLOCK,),
+        pre_risk_multiplier=Decimal("0"),
+        proposed_notional=Decimal("0"),
+        proposed_quantity=Decimal("0"),
+    )
+    malformed = StrategyDecision.model_construct(
+        **decision.model_dump(exclude={"decision_id", "decision_hash", "sizing"}),
+        decision_id="STRATEGYDECISION:MALFORMED-ZERO-SIZE",
+        decision_hash="0" * 64,
+        sizing=zero_size,
+    )
+    malformed_hash = build_strategy_decision_hash(decision=malformed)
+
+    with pytest.raises(ValidationError, match="positive proposed size"):
+        StrategyDecision(
+            **malformed.model_dump(exclude={"decision_id", "decision_hash"}),
+            decision_id=build_strategy_decision_id(decision_hash=malformed_hash),
+            decision_hash=malformed_hash,
+        )
 
 
 def test_cost_uncertainty_nonpositive_and_insufficient_edge_create_no_trade() -> None:
