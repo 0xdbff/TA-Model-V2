@@ -7,6 +7,7 @@ paper, or future live gateways; routing is handled by the risk-gated replay seam
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 
 from ta_model.contracts.instrument_master import (
@@ -44,14 +45,25 @@ _LIMIT_OWNERS: dict[str, str] = {
     "config.required_state": "Risk / architecture",
     "kill_switch.active_state": "Risk / ops",
     "order.max_notional": "Risk / execution",
+    "order.price_collar": "Execution / risk",
     "position.instrument_exposure": "Risk",
     "position.strategy_exposure": "Risk / strategy owner",
     "position.total_spot_exposure": "Risk / product",
     "position.no_short_or_oversell": "Risk / execution",
+    "loss.daily_account": "Risk",
+    "loss.daily_strategy": "Risk / strategy owner",
+    "loss.max_drawdown": "Risk / product",
+    "liquidity.participation": "Execution / risk",
+    "liquidity.spread": "Execution / risk",
+    "market.volatility": "Risk / quant",
     "data.freshness": "Data / risk",
     "venue.status": "Ops / execution",
     "execution.order_throttle": "Execution / ops",
     "execution.duplicate_idempotency": "Execution / risk",
+    "execution.reject_burst": "Execution / ops",
+    "engine.latency": "Ops / risk",
+    "model.drift_or_calibration": "ML / risk",
+    "tca.cost_slippage": "Execution / risk",
 }
 
 _KILL_STATE_SEVERITY: dict[KillSwitchState, int] = {
@@ -94,6 +106,7 @@ def evaluate_pre_trade_risk(*, request: RiskCheckRequest, policy: RiskPolicy) ->
         _product_scope_evaluation(metadata=metadata),
         _kill_switch_evaluation(request=request, order_effect=order_effect),
         _venue_status_evaluation(metadata=metadata),
+        _price_collar_evaluation(request=request, policy=policy),
         _order_notional_evaluation(
             request=request,
             policy=policy,
@@ -119,9 +132,23 @@ def evaluate_pre_trade_risk(*, request: RiskCheckRequest, policy: RiskPolicy) ->
             order_effect=order_effect,
         ),
         _no_short_or_oversell_evaluation(request=request),
+        _daily_account_loss_evaluation(request=request, policy=policy),
+        _daily_strategy_loss_evaluation(request=request, policy=policy),
+        _max_drawdown_evaluation(request=request, policy=policy),
+        _liquidity_participation_evaluation(
+            request=request,
+            policy=policy,
+            order_effect=order_effect,
+        ),
+        _liquidity_spread_evaluation(request=request, policy=policy),
+        _market_volatility_evaluation(request=request, policy=policy),
         _data_freshness_evaluation(request=request),
         _idempotency_evaluation(request=request),
         *_throttle_evaluations(request=request),
+        *_reject_burst_evaluations(request=request),
+        _engine_latency_evaluation(request=request),
+        _model_drift_or_calibration_evaluation(request=request),
+        _tca_cost_slippage_evaluation(request=request, policy=policy),
     )
 
     has_hard_breach = any(
@@ -194,6 +221,8 @@ def _allowed_incremental_notional(
     ):
         return None
     if evaluation.limit_id == "order.max_notional":
+        return evaluation.capped_value
+    if evaluation.limit_id == "liquidity.participation":
         return evaluation.capped_value
     if evaluation.limit_id == "position.instrument_exposure":
         return evaluation.capped_value - request.current_instrument_exposure_notional
@@ -403,6 +432,52 @@ def _venue_status_evaluation(*, metadata: _MetadataView) -> RiskLimitEvaluation:
     )
 
 
+def _price_collar_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    telemetry = request.price_risk
+    hard_threshold = policy.price_collar_hard_bps
+    soft_threshold = policy.price_collar_soft_bps
+    current_value = telemetry.price_deviation_bps
+
+    if not telemetry.reference_price_available:
+        return _evaluation(
+            "order.price_collar",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.ORDER_PRICE_COLLAR_HARD,
+            soft_threshold=soft_threshold,
+        )
+    if current_value > hard_threshold or (
+        request.order_intent.order_type is OrderType.MARKET and current_value > soft_threshold
+    ):
+        return _evaluation(
+            "order.price_collar",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.ORDER_PRICE_COLLAR_HARD,
+            soft_threshold=soft_threshold,
+        )
+    if current_value > soft_threshold:
+        return _evaluation(
+            "order.price_collar",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.SOFT_BREACH,
+            RiskReasonCode.ORDER_PRICE_COLLAR_SOFT,
+            soft_threshold=soft_threshold,
+        )
+    return _evaluation(
+        "order.price_collar",
+        current_value,
+        hard_threshold,
+        None,
+        soft_threshold=soft_threshold,
+    )
+
+
 def _order_notional_evaluation(
     *,
     request: RiskCheckRequest,
@@ -595,6 +670,190 @@ def _no_short_or_oversell_evaluation(*, request: RiskCheckRequest) -> RiskLimitE
     return _evaluation("position.no_short_or_oversell", oversell_quantity, Decimal("0"), None)
 
 
+def _daily_account_loss_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    hard_threshold = -(policy.paper_nav * policy.max_daily_account_loss_hard_pct)
+    soft_threshold = -(policy.paper_nav * policy.max_daily_account_loss_soft_pct)
+    current_value = request.loss_risk.daily_account_pnl
+    return _negative_loss_evaluation(
+        limit_id="loss.daily_account",
+        current_value=current_value,
+        soft_threshold=soft_threshold,
+        hard_threshold=hard_threshold,
+        soft_reason=RiskReasonCode.DAILY_ACCOUNT_LOSS_SOFT,
+        hard_reason=RiskReasonCode.DAILY_ACCOUNT_LOSS_HARD,
+    )
+
+
+def _daily_strategy_loss_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    hard_threshold = -(policy.paper_nav * policy.max_daily_strategy_loss_hard_pct)
+    soft_threshold = -(policy.paper_nav * policy.max_daily_strategy_loss_soft_pct)
+    current_value = request.loss_risk.daily_strategy_pnl
+    return _negative_loss_evaluation(
+        limit_id="loss.daily_strategy",
+        current_value=current_value,
+        soft_threshold=soft_threshold,
+        hard_threshold=hard_threshold,
+        soft_reason=RiskReasonCode.DAILY_STRATEGY_LOSS_SOFT,
+        hard_reason=RiskReasonCode.DAILY_STRATEGY_LOSS_HARD,
+    )
+
+
+def _max_drawdown_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    return _threshold_evaluation(
+        limit_id="loss.max_drawdown",
+        current_value=request.loss_risk.max_drawdown_pct,
+        soft_threshold=policy.max_drawdown_soft_pct,
+        hard_threshold=policy.max_drawdown_hard_pct,
+        soft_reason=RiskReasonCode.MAX_DRAWDOWN_SOFT,
+        hard_reason=RiskReasonCode.MAX_DRAWDOWN_HARD,
+    )
+
+
+def _liquidity_participation_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy, order_effect: OrderEffect
+) -> RiskLimitEvaluation:
+    telemetry = request.liquidity_risk
+    if telemetry.depth_metric_required and telemetry.top_of_book_depth_notional is None:
+        return _evaluation(
+            "liquidity.participation",
+            Decimal("1"),
+            Decimal("0"),
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.LIQUIDITY_PARTICIPATION_HARD,
+        )
+
+    checks: list[tuple[Decimal, Decimal, Decimal, Decimal]] = []
+    if telemetry.rolling_24h_quote_volume_notional is not None:
+        checks.append(
+            (
+                order_effect.proposed_notional / telemetry.rolling_24h_quote_volume_notional,
+                policy.max_participation_24h_quote_volume_soft_pct,
+                policy.max_participation_24h_quote_volume_hard_pct,
+                telemetry.rolling_24h_quote_volume_notional
+                * policy.max_participation_24h_quote_volume_soft_pct,
+            )
+        )
+    if telemetry.top_of_book_depth_notional is not None:
+        checks.append(
+            (
+                order_effect.proposed_notional / telemetry.top_of_book_depth_notional,
+                policy.max_participation_top_of_book_depth_soft_pct,
+                policy.max_participation_top_of_book_depth_hard_pct,
+                telemetry.top_of_book_depth_notional
+                * policy.max_participation_top_of_book_depth_soft_pct,
+            )
+        )
+
+    if not checks:
+        return _evaluation(
+            "liquidity.participation",
+            Decimal("0"),
+            policy.max_participation_24h_quote_volume_hard_pct,
+            None,
+            soft_threshold=policy.max_participation_24h_quote_volume_soft_pct,
+        )
+
+    hard_breach = next((check for check in checks if check[0] > check[2]), None)
+    if hard_breach is not None:
+        current_value, soft_threshold, hard_threshold, _soft_cap_notional = hard_breach
+        return _evaluation(
+            "liquidity.participation",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.LIQUIDITY_PARTICIPATION_HARD,
+            soft_threshold=soft_threshold,
+        )
+
+    soft_breach = next((check for check in checks if check[0] > check[1]), None)
+    if soft_breach is not None:
+        current_value, soft_threshold, hard_threshold, soft_cap_notional = soft_breach
+        return _evaluation(
+            "liquidity.participation",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.SOFT_BREACH,
+            RiskReasonCode.LIQUIDITY_PARTICIPATION_SOFT,
+            soft_threshold=soft_threshold,
+            capped_value=soft_cap_notional,
+        )
+
+    current_value, soft_threshold, hard_threshold, _soft_cap_notional = max(
+        checks, key=lambda item: item[0]
+    )
+    return _evaluation(
+        "liquidity.participation",
+        current_value,
+        hard_threshold,
+        None,
+        soft_threshold=soft_threshold,
+    )
+
+
+def _liquidity_spread_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    telemetry = request.liquidity_risk
+    hard_threshold = policy.max_spread_hard_bps
+    soft_threshold = policy.max_spread_soft_bps
+    if telemetry.current_spread_bps is None:
+        return _evaluation(
+            "liquidity.spread",
+            Decimal("0"),
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.LIQUIDITY_SPREAD_HARD,
+            soft_threshold=soft_threshold,
+        )
+    current_value = telemetry.current_spread_bps
+    if telemetry.spread_cost_model_envelope_bps is not None:
+        hard_threshold = min(hard_threshold, telemetry.spread_cost_model_envelope_bps)
+    return _threshold_evaluation(
+        limit_id="liquidity.spread",
+        current_value=current_value,
+        soft_threshold=soft_threshold,
+        hard_threshold=hard_threshold,
+        soft_reason=RiskReasonCode.LIQUIDITY_SPREAD_SOFT,
+        hard_reason=RiskReasonCode.LIQUIDITY_SPREAD_HARD,
+    )
+
+
+def _market_volatility_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    telemetry = request.market_risk
+    hard_threshold = policy.max_volatility_envelope_hard_multiplier
+    soft_threshold = policy.max_volatility_envelope_soft_multiplier
+    current_value = telemetry.volatility_envelope_multiplier or Decimal("0")
+    if (
+        not telemetry.volatility_envelope_available
+        or telemetry.volatility_envelope_multiplier is None
+        or telemetry.volatility_shock_active
+    ):
+        return _evaluation(
+            "market.volatility",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.MARKET_VOLATILITY_HARD,
+            soft_threshold=soft_threshold,
+        )
+    return _threshold_evaluation(
+        limit_id="market.volatility",
+        current_value=current_value,
+        soft_threshold=soft_threshold,
+        hard_threshold=hard_threshold,
+        soft_reason=RiskReasonCode.MARKET_VOLATILITY_SOFT,
+        hard_reason=RiskReasonCode.MARKET_VOLATILITY_HARD,
+    )
+
+
 def _data_freshness_evaluation(*, request: RiskCheckRequest) -> RiskLimitEvaluation:
     blocking_signals = tuple(
         signal
@@ -691,6 +950,143 @@ def _throttle_evaluations(*, request: RiskCheckRequest) -> tuple[RiskLimitEvalua
     return tuple(evaluations)
 
 
+def _reject_burst_evaluations(*, request: RiskCheckRequest) -> tuple[RiskLimitEvaluation, ...]:
+    if not request.reject_burst_windows:
+        return (_evaluation("execution.reject_burst", Decimal("0"), Decimal("0"), None),)
+
+    evaluations: list[RiskLimitEvaluation] = []
+    for window in request.reject_burst_windows:
+        current_value = Decimal(window.observed_reject_count)
+        hard_threshold = Decimal(window.hard_limit)
+        soft_threshold = Decimal(window.soft_limit)
+        if window.unknown_state_reject_observed or current_value >= hard_threshold:
+            evaluations.append(
+                _evaluation(
+                    "execution.reject_burst",
+                    current_value,
+                    hard_threshold,
+                    RiskLimitStatus.HARD_BREACH,
+                    RiskReasonCode.REJECT_BURST_HARD,
+                    soft_threshold=soft_threshold,
+                )
+            )
+        elif current_value >= soft_threshold:
+            evaluations.append(
+                _evaluation(
+                    "execution.reject_burst",
+                    current_value,
+                    hard_threshold,
+                    RiskLimitStatus.SOFT_BREACH,
+                    RiskReasonCode.REJECT_BURST_SOFT,
+                    soft_threshold=soft_threshold,
+                )
+            )
+        else:
+            evaluations.append(
+                _evaluation(
+                    "execution.reject_burst",
+                    current_value,
+                    hard_threshold,
+                    None,
+                    soft_threshold=soft_threshold,
+                )
+            )
+    return tuple(evaluations)
+
+
+def _engine_latency_evaluation(*, request: RiskCheckRequest) -> RiskLimitEvaluation:
+    decision_to_risk_ms = _timedelta_ms(request.risk_check_ts - request.decision_ts)
+    current_value = max(decision_to_risk_ms, request.engine_latency.risk_to_gateway_latency_ms)
+    hard_threshold = request.engine_latency.latency_budget_ms
+    soft_threshold = hard_threshold * Decimal("0.5")
+    if not request.engine_latency.event_time_validity_proven or current_value > hard_threshold:
+        return _evaluation(
+            "engine.latency",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.ENGINE_LATENCY_HARD,
+            soft_threshold=soft_threshold,
+        )
+    if current_value > soft_threshold:
+        return _evaluation(
+            "engine.latency",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.SOFT_BREACH,
+            RiskReasonCode.ENGINE_LATENCY_SOFT,
+            soft_threshold=soft_threshold,
+        )
+    return _evaluation(
+        "engine.latency",
+        current_value,
+        hard_threshold,
+        None,
+        soft_threshold=soft_threshold,
+    )
+
+
+def _model_drift_or_calibration_evaluation(
+    *, request: RiskCheckRequest
+) -> RiskLimitEvaluation:
+    telemetry = request.model_risk
+    if telemetry.severe_anomaly_detected or not telemetry.calibrated_outputs:
+        return _evaluation(
+            "model.drift_or_calibration",
+            Decimal("1"),
+            Decimal("0"),
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.MODEL_DRIFT_OR_CALIBRATION_HARD,
+            soft_threshold=Decimal("0"),
+        )
+    if telemetry.sustained_drift_detected:
+        return _evaluation(
+            "model.drift_or_calibration",
+            Decimal("1"),
+            Decimal("0"),
+            RiskLimitStatus.SOFT_BREACH,
+            RiskReasonCode.MODEL_DRIFT_OR_CALIBRATION_SOFT,
+            soft_threshold=Decimal("0"),
+        )
+    return _evaluation(
+        "model.drift_or_calibration",
+        Decimal("0"),
+        Decimal("0"),
+        None,
+        soft_threshold=Decimal("0"),
+    )
+
+
+def _tca_cost_slippage_evaluation(
+    *, request: RiskCheckRequest, policy: RiskPolicy
+) -> RiskLimitEvaluation:
+    telemetry = request.tca_risk
+    hard_threshold = policy.tca_cost_slippage_hard_multiplier
+    soft_threshold = policy.tca_cost_slippage_soft_multiplier
+    current_value = telemetry.cost_slippage_multiplier or Decimal("0")
+    if (
+        not telemetry.tca_available
+        or not telemetry.fill_quality_known
+        or telemetry.cost_slippage_multiplier is None
+    ):
+        return _evaluation(
+            "tca.cost_slippage",
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            RiskReasonCode.TCA_COST_SLIPPAGE_HARD,
+            soft_threshold=soft_threshold,
+        )
+    return _threshold_evaluation(
+        limit_id="tca.cost_slippage",
+        current_value=current_value,
+        soft_threshold=soft_threshold,
+        hard_threshold=hard_threshold,
+        soft_reason=RiskReasonCode.TCA_COST_SLIPPAGE_SOFT,
+        hard_reason=RiskReasonCode.TCA_COST_SLIPPAGE_HARD,
+    )
+
+
 def _threshold_evaluation(
     *,
     limit_id: str,
@@ -726,6 +1122,46 @@ def _threshold_evaluation(
         None,
         soft_threshold=soft_threshold,
     )
+
+
+def _negative_loss_evaluation(
+    *,
+    limit_id: str,
+    current_value: Decimal,
+    soft_threshold: Decimal,
+    hard_threshold: Decimal,
+    soft_reason: RiskReasonCode,
+    hard_reason: RiskReasonCode,
+) -> RiskLimitEvaluation:
+    if current_value <= hard_threshold:
+        return _evaluation(
+            limit_id,
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.HARD_BREACH,
+            hard_reason,
+            soft_threshold=soft_threshold,
+        )
+    if current_value <= soft_threshold:
+        return _evaluation(
+            limit_id,
+            current_value,
+            hard_threshold,
+            RiskLimitStatus.SOFT_BREACH,
+            soft_reason,
+            soft_threshold=soft_threshold,
+        )
+    return _evaluation(
+        limit_id,
+        current_value,
+        hard_threshold,
+        None,
+        soft_threshold=soft_threshold,
+    )
+
+
+def _timedelta_ms(delta: timedelta) -> Decimal:
+    return Decimal(str(delta.total_seconds())) * Decimal("1000")
 
 
 def _evaluation(

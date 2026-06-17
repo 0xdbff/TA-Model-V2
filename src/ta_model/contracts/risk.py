@@ -64,6 +64,8 @@ class RiskReasonCode(StrEnum):
     KILL_SWITCH_ACTIVE = "kill_switch_active"
     ORDER_MAX_NOTIONAL_SOFT = "order_max_notional_soft"
     ORDER_MAX_NOTIONAL_HARD = "order_max_notional_hard"
+    ORDER_PRICE_COLLAR_SOFT = "order_price_collar_soft"
+    ORDER_PRICE_COLLAR_HARD = "order_price_collar_hard"
     POSITION_INSTRUMENT_EXPOSURE_SOFT = "position_instrument_exposure_soft"
     POSITION_INSTRUMENT_EXPOSURE_HARD = "position_instrument_exposure_hard"
     POSITION_STRATEGY_EXPOSURE_SOFT = "position_strategy_exposure_soft"
@@ -72,12 +74,32 @@ class RiskReasonCode(StrEnum):
     POSITION_TOTAL_SPOT_EXPOSURE_HARD = "position_total_spot_exposure_hard"
     CASH_RESERVE_HARD = "cash_reserve_hard"
     NO_SHORT_OR_OVERSELL = "no_short_or_oversell"
+    DAILY_ACCOUNT_LOSS_SOFT = "daily_account_loss_soft"
+    DAILY_ACCOUNT_LOSS_HARD = "daily_account_loss_hard"
+    DAILY_STRATEGY_LOSS_SOFT = "daily_strategy_loss_soft"
+    DAILY_STRATEGY_LOSS_HARD = "daily_strategy_loss_hard"
+    MAX_DRAWDOWN_SOFT = "max_drawdown_soft"
+    MAX_DRAWDOWN_HARD = "max_drawdown_hard"
+    LIQUIDITY_PARTICIPATION_SOFT = "liquidity_participation_soft"
+    LIQUIDITY_PARTICIPATION_HARD = "liquidity_participation_hard"
+    LIQUIDITY_SPREAD_SOFT = "liquidity_spread_soft"
+    LIQUIDITY_SPREAD_HARD = "liquidity_spread_hard"
+    MARKET_VOLATILITY_SOFT = "market_volatility_soft"
+    MARKET_VOLATILITY_HARD = "market_volatility_hard"
     DATA_HEALTH_BLOCK = "data_health_block"
     VENUE_STATUS_HARD = "venue_status_hard"
     VENUE_STATUS_SOFT = "venue_status_soft"
     DUPLICATE_IDEMPOTENCY = "duplicate_idempotency"
     ORDER_THROTTLE_SOFT = "order_throttle_soft"
     ORDER_THROTTLE_HARD = "order_throttle_hard"
+    REJECT_BURST_SOFT = "reject_burst_soft"
+    REJECT_BURST_HARD = "reject_burst_hard"
+    ENGINE_LATENCY_SOFT = "engine_latency_soft"
+    ENGINE_LATENCY_HARD = "engine_latency_hard"
+    MODEL_DRIFT_OR_CALIBRATION_SOFT = "model_drift_or_calibration_soft"
+    MODEL_DRIFT_OR_CALIBRATION_HARD = "model_drift_or_calibration_hard"
+    TCA_COST_SLIPPAGE_SOFT = "tca_cost_slippage_soft"
+    TCA_COST_SLIPPAGE_HARD = "tca_cost_slippage_hard"
 
 
 class KillSwitchScopeType(StrEnum):
@@ -212,6 +234,32 @@ class RiskPolicy(ContractModel):
     max_total_spot_exposure_soft_pct: Decimal = Field(default=Decimal("0.45"), gt=0, le=1)
     max_total_spot_exposure_hard_pct: Decimal = Field(default=Decimal("0.60"), gt=0, le=1)
     min_cash_reserve_pct: Decimal = Field(default=Decimal("0.30"), ge=0, le=1)
+    price_collar_soft_bps: Decimal = Field(default=Decimal("50"), gt=0)
+    price_collar_hard_bps: Decimal = Field(default=Decimal("100"), gt=0)
+    max_daily_account_loss_soft_pct: Decimal = Field(default=Decimal("0.01"), gt=0, le=1)
+    max_daily_account_loss_hard_pct: Decimal = Field(default=Decimal("0.02"), gt=0, le=1)
+    max_daily_strategy_loss_soft_pct: Decimal = Field(default=Decimal("0.005"), gt=0, le=1)
+    max_daily_strategy_loss_hard_pct: Decimal = Field(default=Decimal("0.01"), gt=0, le=1)
+    max_drawdown_soft_pct: Decimal = Field(default=Decimal("0.05"), gt=0, le=1)
+    max_drawdown_hard_pct: Decimal = Field(default=Decimal("0.08"), gt=0, le=1)
+    max_participation_24h_quote_volume_soft_pct: Decimal = Field(
+        default=Decimal("0.005"), gt=0, le=1
+    )
+    max_participation_24h_quote_volume_hard_pct: Decimal = Field(
+        default=Decimal("0.01"), gt=0, le=1
+    )
+    max_participation_top_of_book_depth_soft_pct: Decimal = Field(
+        default=Decimal("0.05"), gt=0, le=1
+    )
+    max_participation_top_of_book_depth_hard_pct: Decimal = Field(
+        default=Decimal("0.10"), gt=0, le=1
+    )
+    max_spread_soft_bps: Decimal = Field(default=Decimal("25"), gt=0)
+    max_spread_hard_bps: Decimal = Field(default=Decimal("50"), gt=0)
+    max_volatility_envelope_soft_multiplier: Decimal = Field(default=Decimal("2"), gt=0)
+    max_volatility_envelope_hard_multiplier: Decimal = Field(default=Decimal("3"), gt=0)
+    tca_cost_slippage_soft_multiplier: Decimal = Field(default=Decimal("2"), gt=0)
+    tca_cost_slippage_hard_multiplier: Decimal = Field(default=Decimal("3"), gt=0)
     requirement_ids: tuple[NonEmptyString, ...] = ("FR-010", "FR-011", "NFR-004")
 
     @model_validator(mode="after")
@@ -235,6 +283,51 @@ class RiskPolicy(ContractModel):
             self.max_total_spot_exposure_soft_pct,
             self.max_total_spot_exposure_hard_pct,
             "total spot exposure",
+        )
+        _raise_if_soft_above_hard(
+            self.price_collar_soft_bps,
+            self.price_collar_hard_bps,
+            "price collar",
+        )
+        _raise_if_soft_above_hard(
+            self.max_daily_account_loss_soft_pct,
+            self.max_daily_account_loss_hard_pct,
+            "daily account loss",
+        )
+        _raise_if_soft_above_hard(
+            self.max_daily_strategy_loss_soft_pct,
+            self.max_daily_strategy_loss_hard_pct,
+            "daily strategy loss",
+        )
+        _raise_if_soft_above_hard(
+            self.max_drawdown_soft_pct,
+            self.max_drawdown_hard_pct,
+            "max drawdown",
+        )
+        _raise_if_soft_above_hard(
+            self.max_participation_24h_quote_volume_soft_pct,
+            self.max_participation_24h_quote_volume_hard_pct,
+            "24h quote-volume participation",
+        )
+        _raise_if_soft_above_hard(
+            self.max_participation_top_of_book_depth_soft_pct,
+            self.max_participation_top_of_book_depth_hard_pct,
+            "top-of-book participation",
+        )
+        _raise_if_soft_above_hard(
+            self.max_spread_soft_bps,
+            self.max_spread_hard_bps,
+            "spread",
+        )
+        _raise_if_soft_above_hard(
+            self.max_volatility_envelope_soft_multiplier,
+            self.max_volatility_envelope_hard_multiplier,
+            "volatility envelope",
+        )
+        _raise_if_soft_above_hard(
+            self.tca_cost_slippage_soft_multiplier,
+            self.tca_cost_slippage_hard_multiplier,
+            "TCA cost/slippage",
         )
         expected_hash = build_risk_policy_hash(policy=self)
         if self.policy_hash != expected_hash:
@@ -328,6 +421,83 @@ class OrderThrottleWindow(ContractModel):
         return self
 
 
+class PriceRiskTelemetry(ContractModel):
+    """Event-time price-collar telemetry for one order intent."""
+
+    reference_price_available: bool = True
+    price_deviation_bps: NonNegativeDecimal = Decimal("0")
+
+
+class LossRiskTelemetry(ContractModel):
+    """Daily loss and drawdown telemetry consumed by hard risk controls."""
+
+    daily_account_pnl: Decimal = Decimal("0")
+    daily_strategy_pnl: Decimal = Decimal("0")
+    max_drawdown_pct: NonNegativeDecimal = Decimal("0")
+
+
+class LiquidityRiskTelemetry(ContractModel):
+    """Liquidity, participation, and spread telemetry available at decision time."""
+
+    rolling_24h_quote_volume_notional: PositiveDecimal | None = None
+    top_of_book_depth_notional: PositiveDecimal | None = None
+    depth_metric_required: bool = False
+    current_spread_bps: NonNegativeDecimal | None = Decimal("0")
+    spread_cost_model_envelope_bps: NonNegativeDecimal | None = None
+
+
+class MarketRiskTelemetry(ContractModel):
+    """Volatility envelope telemetry for the strategy/instrument path."""
+
+    volatility_envelope_available: bool = True
+    volatility_envelope_multiplier: NonNegativeDecimal | None = Decimal("1")
+    volatility_shock_active: bool = False
+
+
+class ExecutionRejectBurstWindow(ContractModel):
+    """Recent venue/account reject burst telemetry for pre-gateway blocking."""
+
+    scope_id: CanonicalId
+    observed_reject_count: int = Field(ge=0)
+    soft_limit: int = Field(default=3, gt=0)
+    hard_limit: int = Field(default=5, gt=0)
+    window_started_at: AwareDatetime
+    window_seconds: int = Field(default=300, gt=0)
+    unknown_state_reject_observed: bool = False
+    owner: NonEmptyString = "Execution / ops"
+    requirement_ids: tuple[NonEmptyString, ...] = ("FR-010", "NFR-004")
+
+    @model_validator(mode="after")
+    def reject_burst_window_is_consistent(self) -> Self:
+        if self.soft_limit > self.hard_limit:
+            raise ValueError("reject burst soft_limit cannot exceed hard_limit")
+        return self
+
+
+class EngineLatencyTelemetry(ContractModel):
+    """Decision/risk/gateway latency budget telemetry."""
+
+    latency_budget_ms: PositiveDecimal = Decimal("60000")
+    risk_to_gateway_latency_ms: NonNegativeDecimal = Decimal("0")
+    event_time_validity_proven: bool = True
+
+
+class ModelRiskTelemetry(ContractModel):
+    """Model drift/calibration telemetry for strategy risk gating."""
+
+    sustained_drift_detected: bool = False
+    severe_anomaly_detected: bool = False
+    calibrated_outputs: bool = True
+
+
+class TcaRiskTelemetry(ContractModel):
+    """TCA cost/slippage telemetry for execution risk gating."""
+
+    tca_available: bool = True
+    fill_quality_known: bool = True
+    cost_slippage_multiplier: NonNegativeDecimal | None = Decimal("1")
+
+
 class RiskCheckRequest(ContractModel):
     """Complete independent risk-check input for one pre-trade order intent."""
 
@@ -351,9 +521,17 @@ class RiskCheckRequest(ContractModel):
     current_total_spot_exposure_notional: NonNegativeDecimal = Decimal("0")
     instrument_master_snapshot: InstrumentMasterSnapshot
     kill_switch_snapshot: KillSwitchSnapshot
+    price_risk: PriceRiskTelemetry = Field(default_factory=PriceRiskTelemetry)
+    loss_risk: LossRiskTelemetry = Field(default_factory=LossRiskTelemetry)
+    liquidity_risk: LiquidityRiskTelemetry = Field(default_factory=LiquidityRiskTelemetry)
+    market_risk: MarketRiskTelemetry = Field(default_factory=MarketRiskTelemetry)
+    engine_latency: EngineLatencyTelemetry = Field(default_factory=EngineLatencyTelemetry)
+    model_risk: ModelRiskTelemetry = Field(default_factory=ModelRiskTelemetry)
+    tca_risk: TcaRiskTelemetry = Field(default_factory=TcaRiskTelemetry)
     data_health_signals: tuple[DataHealthSignal, ...] = ()
     idempotency_records: tuple[OrderIdempotencyRecord, ...] = ()
     throttle_windows: tuple[OrderThrottleWindow, ...] = ()
+    reject_burst_windows: tuple[ExecutionRejectBurstWindow, ...] = ()
     requirement_ids: tuple[NonEmptyString, ...] = ("FR-010", "FR-011", "NFR-004")
 
     @model_validator(mode="after")
@@ -599,6 +777,13 @@ def make_risk_check_request(
     current_cash: Decimal,
     instrument_master_snapshot: InstrumentMasterSnapshot,
     kill_switch_snapshot: KillSwitchSnapshot,
+    price_risk: PriceRiskTelemetry | None = None,
+    loss_risk: LossRiskTelemetry | None = None,
+    liquidity_risk: LiquidityRiskTelemetry | None = None,
+    market_risk: MarketRiskTelemetry | None = None,
+    engine_latency: EngineLatencyTelemetry | None = None,
+    model_risk: ModelRiskTelemetry | None = None,
+    tca_risk: TcaRiskTelemetry | None = None,
     idempotency_key: str | None = None,
     current_instrument_position_quantity: Decimal = Decimal("0"),
     current_instrument_exposure_notional: Decimal = Decimal("0"),
@@ -607,6 +792,7 @@ def make_risk_check_request(
     data_health_signals: tuple[DataHealthSignal, ...] = (),
     idempotency_records: tuple[OrderIdempotencyRecord, ...] = (),
     throttle_windows: tuple[OrderThrottleWindow, ...] = (),
+    reject_burst_windows: tuple[ExecutionRejectBurstWindow, ...] = (),
 ) -> RiskCheckRequest:
     """Build a deterministic risk-check request from a real order intent."""
 
@@ -631,9 +817,21 @@ def make_risk_check_request(
         current_total_spot_exposure_notional=current_total_spot_exposure_notional,
         instrument_master_snapshot=instrument_master_snapshot,
         kill_switch_snapshot=kill_switch_snapshot,
+        price_risk=price_risk if price_risk is not None else PriceRiskTelemetry(),
+        loss_risk=loss_risk if loss_risk is not None else LossRiskTelemetry(),
+        liquidity_risk=(
+            liquidity_risk if liquidity_risk is not None else LiquidityRiskTelemetry()
+        ),
+        market_risk=market_risk if market_risk is not None else MarketRiskTelemetry(),
+        engine_latency=(
+            engine_latency if engine_latency is not None else EngineLatencyTelemetry()
+        ),
+        model_risk=model_risk if model_risk is not None else ModelRiskTelemetry(),
+        tca_risk=tca_risk if tca_risk is not None else TcaRiskTelemetry(),
         data_health_signals=data_health_signals,
         idempotency_records=idempotency_records,
         throttle_windows=throttle_windows,
+        reject_burst_windows=reject_burst_windows,
     )
     request_hash = build_risk_check_request_hash(request=draft)
     return RiskCheckRequest(
@@ -719,14 +917,52 @@ def build_risk_policy_hash(*, policy: RiskPolicy) -> str:
             "max_instrument_exposure_soft_pct": str(policy.max_instrument_exposure_soft_pct),
             "max_order_notional_hard_pct": str(policy.max_order_notional_hard_pct),
             "max_order_notional_soft_pct": str(policy.max_order_notional_soft_pct),
+            "max_daily_account_loss_hard_pct": str(policy.max_daily_account_loss_hard_pct),
+            "max_daily_account_loss_soft_pct": str(policy.max_daily_account_loss_soft_pct),
+            "max_daily_strategy_loss_hard_pct": str(
+                policy.max_daily_strategy_loss_hard_pct
+            ),
+            "max_daily_strategy_loss_soft_pct": str(
+                policy.max_daily_strategy_loss_soft_pct
+            ),
+            "max_drawdown_hard_pct": str(policy.max_drawdown_hard_pct),
+            "max_drawdown_soft_pct": str(policy.max_drawdown_soft_pct),
+            "max_participation_24h_quote_volume_hard_pct": str(
+                policy.max_participation_24h_quote_volume_hard_pct
+            ),
+            "max_participation_24h_quote_volume_soft_pct": str(
+                policy.max_participation_24h_quote_volume_soft_pct
+            ),
+            "max_participation_top_of_book_depth_hard_pct": str(
+                policy.max_participation_top_of_book_depth_hard_pct
+            ),
+            "max_participation_top_of_book_depth_soft_pct": str(
+                policy.max_participation_top_of_book_depth_soft_pct
+            ),
+            "max_spread_hard_bps": str(policy.max_spread_hard_bps),
+            "max_spread_soft_bps": str(policy.max_spread_soft_bps),
             "max_strategy_exposure_hard_pct": str(policy.max_strategy_exposure_hard_pct),
             "max_strategy_exposure_soft_pct": str(policy.max_strategy_exposure_soft_pct),
             "max_total_spot_exposure_hard_pct": str(policy.max_total_spot_exposure_hard_pct),
             "max_total_spot_exposure_soft_pct": str(policy.max_total_spot_exposure_soft_pct),
+            "max_volatility_envelope_hard_multiplier": str(
+                policy.max_volatility_envelope_hard_multiplier
+            ),
+            "max_volatility_envelope_soft_multiplier": str(
+                policy.max_volatility_envelope_soft_multiplier
+            ),
             "min_cash_reserve_pct": str(policy.min_cash_reserve_pct),
             "name": policy.name,
             "paper_nav": str(policy.paper_nav),
+            "price_collar_hard_bps": str(policy.price_collar_hard_bps),
+            "price_collar_soft_bps": str(policy.price_collar_soft_bps),
             "requirement_ids": policy.requirement_ids,
+            "tca_cost_slippage_hard_multiplier": str(
+                policy.tca_cost_slippage_hard_multiplier
+            ),
+            "tca_cost_slippage_soft_multiplier": str(
+                policy.tca_cost_slippage_soft_multiplier
+            ),
         }
     )
 
@@ -810,17 +1046,27 @@ def build_risk_check_request_hash(*, request: RiskCheckRequest) -> str:
             "idempotency_records": tuple(
                 _model_json(record) for record in request.idempotency_records
             ),
+            "engine_latency": _model_json(request.engine_latency),
             "instrument_master_snapshot": _instrument_master_risk_payload(
                 snapshot=request.instrument_master_snapshot
             ),
             "kill_switch_snapshot": _model_json(request.kill_switch_snapshot),
+            "liquidity_risk": _model_json(request.liquidity_risk),
+            "loss_risk": _model_json(request.loss_risk),
+            "market_risk": _model_json(request.market_risk),
+            "model_risk": _model_json(request.model_risk),
             "order_intent": _model_json(request.order_intent),
+            "price_risk": _model_json(request.price_risk),
             "reference_price": str(request.reference_price),
+            "reject_burst_windows": tuple(
+                _model_json(window) for window in request.reject_burst_windows
+            ),
             "requirement_ids": request.requirement_ids,
             "risk_check_ts": request.risk_check_ts.isoformat(),
             "run_id": request.run_id,
             "source_decision_id": request.source_decision_id,
             "strategy_version": request.strategy_version,
+            "tca_risk": _model_json(request.tca_risk),
             "throttle_windows": tuple(_model_json(window) for window in request.throttle_windows),
             "trace_id": request.trace_id,
         }
