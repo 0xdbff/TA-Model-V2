@@ -1,0 +1,102 @@
+{
+  "rules": [
+    {
+      "category": "data_stale",
+      "group": "data_health",
+      "metric_id": "paper.data.stale_critical_feed_count",
+      "operator": "gt",
+      "threshold": "0",
+      "owner": "Data / risk",
+      "severity": "critical",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#data-health-and-stale-feeds",
+      "description": "Critical feed stale signal must fail closed for affected scope.",
+      "source_contracts": ["DataHealthSignal"],
+      "requirement_ids": ["NFR-006", "RISK-014"]
+    },
+    {
+      "category": "execution_tca_error",
+      "group": "execution",
+      "metric_id": "paper.execution.tca_error_count",
+      "operator": "gt",
+      "threshold": "0",
+      "owner": "Execution / risk",
+      "severity": "critical",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#execution-tca-and-order-rejects",
+      "description": "Paper TCA errors require execution review before paper-readiness claim.",
+      "source_contracts": ["PaperTcaReport"],
+      "requirement_ids": ["FR-014", "US-011", "RISK-014"]
+    },
+    {
+      "category": "order_reject",
+      "group": "execution",
+      "metric_id": "paper.execution.order_reject_count",
+      "operator": "gt",
+      "threshold": "0",
+      "owner": "Execution / ops",
+      "severity": "warning",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#execution-tca-and-order-rejects",
+      "description": "Gateway replay rejects require routing to execution operations.",
+      "source_contracts": ["PaperAccountSessionReport", "ExecutionGatewayReport"],
+      "requirement_ids": ["FR-013", "FR-014", "RISK-014"]
+    },
+    {
+      "category": "portfolio_drawdown",
+      "group": "portfolio",
+      "metric_id": "paper.portfolio.max_drawdown_pct",
+      "operator": "gt",
+      "threshold": "0.05",
+      "owner": "Risk / product",
+      "severity": "warning",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#portfolio-accounting-and-drawdown",
+      "description": "Drawdown-like portfolio risk telemetry crossed paper soft threshold.",
+      "source_contracts": ["RiskCheckEvent"],
+      "requirement_ids": ["FR-014", "RISK-014"]
+    },
+    {
+      "category": "portfolio_accounting",
+      "group": "portfolio",
+      "metric_id": "paper.portfolio.account_state_linkage_gap",
+      "operator": "gt",
+      "threshold": "0",
+      "owner": "Portfolio / ops",
+      "severity": "warning",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#portfolio-accounting-and-drawdown",
+      "description": "Paper account final state needs stronger computed/replay linkage.",
+      "source_contracts": ["PaperAccountSessionReport"],
+      "requirement_ids": ["FR-013", "FR-014", "RISK-014"]
+    },
+    {
+      "category": "risk_kill_switch",
+      "group": "risk",
+      "metric_id": "paper.risk.kill_switch_block_count",
+      "operator": "gt",
+      "threshold": "0",
+      "owner": "Risk / ops",
+      "severity": "critical",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#risk-kill-switch-and-pre-trade-blocks",
+      "description": "Kill-switch or unknown kill state blocked paper-path risk checks.",
+      "source_contracts": ["RiskCheckEvent"],
+      "requirement_ids": ["FR-010", "FR-011", "NFR-004", "RISK-014"]
+    },
+    {
+      "category": "risk_pre_trade_block",
+      "group": "risk",
+      "metric_id": "paper.risk.pre_trade_block_count",
+      "operator": "gt",
+      "threshold": "0",
+      "owner": "Risk",
+      "severity": "warning",
+      "channel": "paper-readiness-ops",
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#risk-kill-switch-and-pre-trade-blocks",
+      "description": "Independent risk engine blocked or no-traded paper-path requests.",
+      "source_contracts": ["RiskCheckEvent"],
+      "requirement_ids": ["FR-010", "NFR-004", "RISK-014"]
+    }
+  ]
+}
