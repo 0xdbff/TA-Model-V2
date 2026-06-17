@@ -54,7 +54,23 @@ from ta_model.contracts.forecasts import (
     build_model_version_hash,
     build_model_version_id,
 )
-from ta_model.contracts.paper import PaperAccountSessionReport, PaperTcaReport
+from ta_model.contracts.paper import (
+    PaperAccountSessionReport,
+    PaperFillLogEntry,
+    PaperOrderLifecycleLogEntry,
+    PaperTcaReport,
+    PaperTcaRow,
+    build_paper_account_session_report_hash,
+    build_paper_account_session_report_id,
+    build_paper_fill_log_hash,
+    build_paper_fill_log_id,
+    build_paper_order_lifecycle_log_hash,
+    build_paper_order_lifecycle_log_id,
+    build_paper_tca_report_hash,
+    build_paper_tca_report_id,
+    build_paper_tca_row_hash,
+    build_paper_tca_row_id,
+)
 from ta_model.contracts.risk import RiskCheckEvent, RiskCheckRequest, RiskDecisionStatus
 from ta_model.contracts.simulation import OrderIntent, make_execution_cost_model
 from ta_model.contracts.streaming import QuoteEvent
@@ -319,6 +335,63 @@ def test_risk_blocked_trace_envelope_links_rejection_and_tca_issue_without_fill(
     assert envelope.paper_tca_issue_ids == (tca_report.issues[0].issue_id,)
 
 
+def test_paper_order_log_identity_spoof_is_rejected_with_correct_gateway() -> None:
+    evidence = _approved_trace_evidence()
+    spoofed_session_report = _paper_session_report_with_spoofed_order_log_client_order_id(
+        report=evidence.session_report,
+        client_order_id="ORDERINTENT:S11-PAPER-ORDER-SPOOFED",
+    )
+
+    with pytest.raises(ValueError, match="paper order log client_order_id"):
+        make_decision_trace_envelope(
+            forecast=evidence.forecast,
+            decision=evidence.decision,
+            order_intent=evidence.order_intent,
+            risk_event=evidence.risk_event,
+            gateway_report=evidence.gateway_report,
+            paper_account_report=spoofed_session_report,
+            paper_tca_report=evidence.tca_report,
+        )
+
+
+def test_paper_fill_log_identity_spoof_is_rejected_with_correct_gateway() -> None:
+    evidence = _approved_trace_evidence()
+    spoofed_session_report = _paper_session_report_with_spoofed_fill_log_client_order_id(
+        report=evidence.session_report,
+        client_order_id="ORDERINTENT:S11-PAPER-FILL-SPOOFED",
+    )
+
+    with pytest.raises(ValueError, match="paper fill log client_order_id"):
+        make_decision_trace_envelope(
+            forecast=evidence.forecast,
+            decision=evidence.decision,
+            order_intent=evidence.order_intent,
+            risk_event=evidence.risk_event,
+            gateway_report=evidence.gateway_report,
+            paper_account_report=spoofed_session_report,
+            paper_tca_report=evidence.tca_report,
+        )
+
+
+def test_paper_tca_row_identity_spoof_is_rejected_with_correct_gateway() -> None:
+    evidence = _approved_trace_evidence()
+    spoofed_tca_report = _paper_tca_report_with_spoofed_row_client_order_id(
+        report=evidence.tca_report,
+        client_order_id="ORDERINTENT:S11-PAPER-TCA-SPOOFED",
+    )
+
+    with pytest.raises(ValueError, match="paper TCA row client_order_id"):
+        make_decision_trace_envelope(
+            forecast=evidence.forecast,
+            decision=evidence.decision,
+            order_intent=evidence.order_intent,
+            risk_event=evidence.risk_event,
+            gateway_report=evidence.gateway_report,
+            paper_account_report=evidence.session_report,
+            paper_tca_report=spoofed_tca_report,
+        )
+
+
 def _approved_trace_evidence() -> ApprovedTraceEvidence:
     forecast = _forecast(median="0.050", uncertainty="0.000")
     decision = _decision(forecast=forecast, sizing_inputs=_sizing_inputs())
@@ -425,6 +498,147 @@ def _gateway_report_with_spoofed_client_order_id(
                 report_hash=gateway_report_hash
             ),
             "gateway_report_hash": gateway_report_hash,
+        }
+    )
+
+
+def _paper_session_report_with_spoofed_order_log_client_order_id(
+    *, report: PaperAccountSessionReport, client_order_id: str
+) -> PaperAccountSessionReport:
+    spoofed_order_log = _paper_order_log_with_client_order_id(
+        entry=report.order_logs[0],
+        client_order_id=client_order_id,
+    )
+    return _paper_session_report_with_logs(
+        report=report,
+        order_logs=(spoofed_order_log,),
+        fill_logs=report.fill_logs,
+    )
+
+
+def _paper_session_report_with_spoofed_fill_log_client_order_id(
+    *, report: PaperAccountSessionReport, client_order_id: str
+) -> PaperAccountSessionReport:
+    spoofed_fill_log = _paper_fill_log_with_client_order_id(
+        entry=report.fill_logs[0],
+        client_order_id=client_order_id,
+    )
+    return _paper_session_report_with_logs(
+        report=report,
+        order_logs=report.order_logs,
+        fill_logs=(spoofed_fill_log,),
+    )
+
+
+def _paper_order_log_with_client_order_id(
+    *, entry: PaperOrderLifecycleLogEntry, client_order_id: str
+) -> PaperOrderLifecycleLogEntry:
+    draft = entry.model_copy(
+        update={
+            "order_log_id": "PAPERORDERLOG:PLACEHOLDER",
+            "order_log_hash": "0" * 64,
+            "client_order_id": client_order_id,
+        }
+    )
+    entry_hash = build_paper_order_lifecycle_log_hash(entry=draft)
+    return PaperOrderLifecycleLogEntry.model_validate(
+        draft.model_dump(exclude={"order_log_id", "order_log_hash"})
+        | {
+            "order_log_id": build_paper_order_lifecycle_log_id(entry_hash=entry_hash),
+            "order_log_hash": entry_hash,
+        }
+    )
+
+
+def _paper_fill_log_with_client_order_id(
+    *, entry: PaperFillLogEntry, client_order_id: str
+) -> PaperFillLogEntry:
+    draft = entry.model_copy(
+        update={
+            "fill_log_id": "PAPERFILLLOG:PLACEHOLDER",
+            "fill_log_hash": "0" * 64,
+            "client_order_id": client_order_id,
+        }
+    )
+    entry_hash = build_paper_fill_log_hash(entry=draft)
+    return PaperFillLogEntry.model_validate(
+        draft.model_dump(exclude={"fill_log_id", "fill_log_hash"})
+        | {
+            "fill_log_id": build_paper_fill_log_id(entry_hash=entry_hash),
+            "fill_log_hash": entry_hash,
+        }
+    )
+
+
+def _paper_session_report_with_logs(
+    *,
+    report: PaperAccountSessionReport,
+    order_logs: tuple[PaperOrderLifecycleLogEntry, ...],
+    fill_logs: tuple[PaperFillLogEntry, ...],
+) -> PaperAccountSessionReport:
+    draft = report.model_copy(
+        update={
+            "session_report_id": "PAPERSESSION:PLACEHOLDER",
+            "session_report_hash": "0" * 64,
+            "order_log_ids": tuple(entry.order_log_id for entry in order_logs),
+            "fill_log_ids": tuple(entry.fill_log_id for entry in fill_logs),
+            "order_logs": order_logs,
+            "fill_logs": fill_logs,
+        }
+    )
+    report_hash = build_paper_account_session_report_hash(report=draft)
+    return PaperAccountSessionReport.model_validate(
+        draft.model_dump(exclude={"session_report_id", "session_report_hash"})
+        | {
+            "session_report_id": build_paper_account_session_report_id(
+                report_hash=report_hash
+            ),
+            "session_report_hash": report_hash,
+        }
+    )
+
+
+def _paper_tca_report_with_spoofed_row_client_order_id(
+    *, report: PaperTcaReport, client_order_id: str
+) -> PaperTcaReport:
+    spoofed_row = _paper_tca_row_with_client_order_id(
+        row=report.rows[0],
+        client_order_id=client_order_id,
+    )
+    draft = report.model_copy(
+        update={
+            "tca_report_id": "PAPERTCAREPORT:PLACEHOLDER",
+            "tca_report_hash": "0" * 64,
+            "row_ids": (spoofed_row.tca_row_id,),
+            "rows": (spoofed_row,),
+        }
+    )
+    report_hash = build_paper_tca_report_hash(report=draft)
+    return PaperTcaReport.model_validate(
+        draft.model_dump(exclude={"tca_report_id", "tca_report_hash"})
+        | {
+            "tca_report_id": build_paper_tca_report_id(report_hash=report_hash),
+            "tca_report_hash": report_hash,
+        }
+    )
+
+
+def _paper_tca_row_with_client_order_id(
+    *, row: PaperTcaRow, client_order_id: str
+) -> PaperTcaRow:
+    draft = row.model_copy(
+        update={
+            "tca_row_id": "PAPERTCAROW:PLACEHOLDER",
+            "tca_row_hash": "0" * 64,
+            "client_order_id": client_order_id,
+        }
+    )
+    row_hash = build_paper_tca_row_hash(row=draft)
+    return PaperTcaRow.model_validate(
+        draft.model_dump(exclude={"tca_row_id", "tca_row_hash"})
+        | {
+            "tca_row_id": build_paper_tca_row_id(row_hash=row_hash),
+            "tca_row_hash": row_hash,
         }
     )
 

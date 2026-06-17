@@ -38,7 +38,15 @@ from ta_model.contracts.instrument_master import (
     NonEmptyString,
     OrderType,
 )
-from ta_model.contracts.paper import PaperAccountSessionReport, PaperTcaReport
+from ta_model.contracts.paper import (
+    PaperAccountSessionReport,
+    PaperFillLogEntry,
+    PaperOrderLifecycleLogEntry,
+    PaperRejectionLogEntry,
+    PaperTcaIssue,
+    PaperTcaReport,
+    PaperTcaRow,
+)
 from ta_model.contracts.risk import RiskCheckEvent, RiskDecisionStatus, build_order_intent_hash
 from ta_model.contracts.simulation import OrderIntent, OrderSide
 
@@ -680,6 +688,15 @@ def _paper_account_ids_for_event(
             raise ValueError("filled paper trace requires a matching fill log")
     elif not rejection_logs:
         raise ValueError("blocked/rejected paper trace requires a matching rejection log")
+    for order_log in order_logs:
+        _validate_paper_order_log_matches_gateway(entry=order_log, gateway_event=gateway_event)
+    for fill_log in fill_logs:
+        _validate_paper_fill_log_matches_gateway(entry=fill_log, gateway_event=gateway_event)
+    for rejection_log in rejection_logs:
+        _validate_paper_rejection_log_matches_gateway(
+            entry=rejection_log,
+            gateway_event=gateway_event,
+        )
     return (
         tuple(entry.order_log_id for entry in order_logs),
         tuple(entry.fill_log_id for entry in fill_logs),
@@ -717,7 +734,243 @@ def _paper_tca_ids_for_event(
             raise ValueError("filled paper trace requires a matching TCA row")
     elif not issues:
         raise ValueError("blocked/rejected paper trace requires a matching TCA issue")
+    for row in rows:
+        _validate_paper_tca_row_matches_gateway(row=row, gateway_event=gateway_event)
+    for issue in issues:
+        _validate_paper_tca_issue_matches_gateway(issue=issue, gateway_event=gateway_event)
     return tuple(row.tca_row_id for row in rows), tuple(issue.issue_id for issue in issues)
+
+
+def _validate_paper_order_log_matches_gateway(
+    *, entry: PaperOrderLifecycleLogEntry, gateway_event: ExecutionGatewayLifecycleEvent
+) -> None:
+    _raise_on_mismatches(
+        (
+            (entry.run_id, gateway_event.run_id, "paper order log run_id"),
+            (
+                entry.gateway_order_id,
+                gateway_event.gateway_order_id,
+                "paper order log gateway_order_id",
+            ),
+            (entry.risk_check_id, gateway_event.risk_check_id, "paper order log risk_check_id"),
+            (
+                entry.risk_check_hash,
+                gateway_event.risk_check_hash,
+                "paper order log risk_check_hash",
+            ),
+            (entry.risk_decision, gateway_event.risk_decision, "paper order log risk_decision"),
+            (
+                entry.risk_reason_codes,
+                gateway_event.risk_reason_codes,
+                "paper order log risk_reason_codes",
+            ),
+            (
+                entry.client_order_id,
+                gateway_event.client_order_id,
+                "paper order log client_order_id",
+            ),
+            (entry.trace_id, gateway_event.trace_id, "paper order log trace_id"),
+            (
+                entry.source_decision_id,
+                gateway_event.source_decision_id,
+                "paper order log source_decision_id",
+            ),
+            (entry.instrument_id, gateway_event.instrument_id, "paper order log instrument_id"),
+            (entry.venue_id, gateway_event.venue_id, "paper order log venue_id"),
+            (entry.side, gateway_event.side, "paper order log side"),
+            (entry.order_type, gateway_event.order_type, "paper order log order_type"),
+            (
+                entry.requested_quantity,
+                gateway_event.requested_quantity,
+                "paper order log requested_quantity",
+            ),
+            (
+                entry.gateway_quantity,
+                gateway_event.gateway_quantity,
+                "paper order log gateway_quantity",
+            ),
+            (entry.submitted_at, gateway_event.submitted_at, "paper order log submitted_at"),
+            (entry.status, gateway_event.status, "paper order log status"),
+            (entry.replay_status, gateway_event.replay_status, "paper order log replay_status"),
+            (
+                entry.replay_reject_reason,
+                gateway_event.replay_reject_reason,
+                "paper order log replay_reject_reason",
+            ),
+        )
+    )
+
+
+def _validate_paper_fill_log_matches_gateway(
+    *, entry: PaperFillLogEntry, gateway_event: ExecutionGatewayLifecycleEvent
+) -> None:
+    _raise_on_mismatches(
+        (
+            (entry.run_id, gateway_event.run_id, "paper fill log run_id"),
+            (
+                entry.gateway_order_id,
+                gateway_event.gateway_order_id,
+                "paper fill log gateway_order_id",
+            ),
+            (entry.risk_check_id, gateway_event.risk_check_id, "paper fill log risk_check_id"),
+            (
+                entry.risk_check_hash,
+                gateway_event.risk_check_hash,
+                "paper fill log risk_check_hash",
+            ),
+            (
+                entry.client_order_id,
+                gateway_event.client_order_id,
+                "paper fill log client_order_id",
+            ),
+            (entry.trace_id, gateway_event.trace_id, "paper fill log trace_id"),
+            (
+                entry.source_decision_id,
+                gateway_event.source_decision_id,
+                "paper fill log source_decision_id",
+            ),
+            (entry.instrument_id, gateway_event.instrument_id, "paper fill log instrument_id"),
+            (entry.venue_id, gateway_event.venue_id, "paper fill log venue_id"),
+            (entry.side, gateway_event.side, "paper fill log side"),
+            (entry.order_type, gateway_event.order_type, "paper fill log order_type"),
+            (entry.status, gateway_event.status, "paper fill log status"),
+            (
+                entry.replay_order_result_id,
+                gateway_event.replay_order_result_id,
+                "paper fill log replay_order_result_id",
+            ),
+        )
+    )
+
+
+def _validate_paper_rejection_log_matches_gateway(
+    *, entry: PaperRejectionLogEntry, gateway_event: ExecutionGatewayLifecycleEvent
+) -> None:
+    _raise_on_mismatches(
+        (
+            (entry.run_id, gateway_event.run_id, "paper rejection log run_id"),
+            (
+                entry.gateway_order_id,
+                gateway_event.gateway_order_id,
+                "paper rejection log gateway_order_id",
+            ),
+            (
+                entry.risk_check_id,
+                gateway_event.risk_check_id,
+                "paper rejection log risk_check_id",
+            ),
+            (
+                entry.risk_check_hash,
+                gateway_event.risk_check_hash,
+                "paper rejection log risk_check_hash",
+            ),
+            (
+                entry.risk_decision,
+                gateway_event.risk_decision,
+                "paper rejection log risk_decision",
+            ),
+            (
+                entry.risk_reason_codes,
+                gateway_event.risk_reason_codes,
+                "paper rejection log risk_reason_codes",
+            ),
+            (
+                entry.replay_reject_reason,
+                gateway_event.replay_reject_reason,
+                "paper rejection log replay_reject_reason",
+            ),
+            (
+                entry.client_order_id,
+                gateway_event.client_order_id,
+                "paper rejection log client_order_id",
+            ),
+            (entry.trace_id, gateway_event.trace_id, "paper rejection log trace_id"),
+            (
+                entry.source_decision_id,
+                gateway_event.source_decision_id,
+                "paper rejection log source_decision_id",
+            ),
+            (
+                entry.instrument_id,
+                gateway_event.instrument_id,
+                "paper rejection log instrument_id",
+            ),
+            (entry.venue_id, gateway_event.venue_id, "paper rejection log venue_id"),
+            (entry.side, gateway_event.side, "paper rejection log side"),
+            (entry.order_type, gateway_event.order_type, "paper rejection log order_type"),
+            (
+                entry.requested_quantity,
+                gateway_event.requested_quantity,
+                "paper rejection log requested_quantity",
+            ),
+            (
+                entry.gateway_quantity,
+                gateway_event.gateway_quantity,
+                "paper rejection log gateway_quantity",
+            ),
+            (
+                entry.submitted_at,
+                gateway_event.submitted_at,
+                "paper rejection log submitted_at",
+            ),
+            (entry.status, gateway_event.status, "paper rejection log status"),
+        )
+    )
+
+
+def _validate_paper_tca_row_matches_gateway(
+    *, row: PaperTcaRow, gateway_event: ExecutionGatewayLifecycleEvent
+) -> None:
+    _raise_on_mismatches(
+        (
+            (row.run_id, gateway_event.run_id, "paper TCA row run_id"),
+            (
+                row.gateway_order_id,
+                gateway_event.gateway_order_id,
+                "paper TCA row gateway_order_id",
+            ),
+            (row.risk_check_id, gateway_event.risk_check_id, "paper TCA row risk_check_id"),
+            (row.risk_check_hash, gateway_event.risk_check_hash, "paper TCA row risk_check_hash"),
+            (row.client_order_id, gateway_event.client_order_id, "paper TCA row client_order_id"),
+            (row.trace_id, gateway_event.trace_id, "paper TCA row trace_id"),
+            (
+                row.source_decision_id,
+                gateway_event.source_decision_id,
+                "paper TCA row source_decision_id",
+            ),
+            (row.instrument_id, gateway_event.instrument_id, "paper TCA row instrument_id"),
+            (row.venue_id, gateway_event.venue_id, "paper TCA row venue_id"),
+            (row.side, gateway_event.side, "paper TCA row side"),
+            (row.status, gateway_event.status, "paper TCA row status"),
+            (row.submitted_at, gateway_event.submitted_at, "paper TCA row submitted_at"),
+        )
+    )
+
+
+def _validate_paper_tca_issue_matches_gateway(
+    *, issue: PaperTcaIssue, gateway_event: ExecutionGatewayLifecycleEvent
+) -> None:
+    _raise_on_mismatches(
+        (
+            (issue.run_id, gateway_event.run_id, "paper TCA issue run_id"),
+            (issue.risk_check_id, gateway_event.risk_check_id, "paper TCA issue risk_check_id"),
+            (
+                issue.client_order_id,
+                gateway_event.client_order_id,
+                "paper TCA issue client_order_id",
+            ),
+            (issue.trace_id, gateway_event.trace_id, "paper TCA issue trace_id"),
+            (issue.instrument_id, gateway_event.instrument_id, "paper TCA issue instrument_id"),
+            (issue.venue_id, gateway_event.venue_id, "paper TCA issue venue_id"),
+            (issue.status, gateway_event.status, "paper TCA issue status"),
+        )
+    )
+
+
+def _raise_on_mismatches(checks: tuple[tuple[object, object, str], ...]) -> None:
+    for actual, expected, label in checks:
+        if actual != expected:
+            raise ValueError(f"{label} must match gateway event")
 
 
 def _no_order_reason(decision: StrategyDecision) -> str | None:
