@@ -42,6 +42,7 @@ from ta_model.contracts.simulation import (
     ReplayFillStatus,
     ReplayOrderResult,
     ReplayRejectReason,
+    SimulatedAccountState,
 )
 
 
@@ -282,6 +283,11 @@ class ExecutionGatewayReport(ContractModel):
     source_risk_gated_replay_result_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     source_replay_report_id: CanonicalId | None = None
     source_replay_report_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    source_replay_final_account_state_id: CanonicalId | None = None
+    source_replay_final_account_state_hash: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$"
+    )
+    source_replay_final_account_state: SimulatedAccountState | None = None
     requirement_ids: tuple[NonEmptyString, ...] = ("FR-010", "NFR-004", "TFR-008")
 
     @model_validator(mode="after")
@@ -320,6 +326,7 @@ class ExecutionGatewayReport(ContractModel):
 
         if (self.source_replay_report_id is None) != (self.source_replay_report_hash is None):
             raise ValueError("source replay report id/hash must be set together")
+        self._validate_final_account_state_linkage()
         if self.approved_risk_check_ids and self.source_replay_report_id is None:
             raise ValueError("approved gateway reports require a source replay report")
         if not self.approved_risk_check_ids and self.source_replay_report_id is not None:
@@ -331,6 +338,36 @@ class ExecutionGatewayReport(ContractModel):
         if self.gateway_report_id != build_execution_gateway_report_id(report_hash=expected_hash):
             raise ValueError("gateway_report_id is not deterministic")
         return self
+
+    def _validate_final_account_state_linkage(self) -> None:
+        if self.source_replay_report_id is None:
+            if (
+                self.source_replay_final_account_state_id is not None
+                or self.source_replay_final_account_state_hash is not None
+                or self.source_replay_final_account_state is not None
+            ):
+                raise ValueError(
+                    "blocked-only gateway reports must not carry source replay account state"
+                )
+            return
+        if self.source_replay_final_account_state is None:
+            if (
+                self.source_replay_final_account_state_id is not None
+                or self.source_replay_final_account_state_hash is not None
+            ):
+                raise ValueError(
+                    "source replay account state id/hash require embedded account state"
+                )
+            return
+        expected_hash = build_execution_gateway_account_state_hash(
+            account_state=self.source_replay_final_account_state
+        )
+        if self.source_replay_final_account_state_hash != expected_hash:
+            raise ValueError("source replay final account state hash is not deterministic")
+        if self.source_replay_final_account_state_id != build_execution_gateway_account_state_id(
+            account_state_hash=expected_hash
+        ):
+            raise ValueError("source replay final account state id is not deterministic")
 
 
 def make_execution_gateway_lifecycle_event(
@@ -459,6 +496,14 @@ def make_execution_gateway_report(
 
     _validate_gateway_fill_mode(gateway_kind=gateway_kind, fill_mode=fill_mode)
     source_replay_report = risk_gated_replay_result.replay_report
+    source_final_account_state = (
+        source_replay_report.final_account_state if source_replay_report is not None else None
+    )
+    source_final_account_state_hash = (
+        build_execution_gateway_account_state_hash(account_state=source_final_account_state)
+        if source_final_account_state is not None
+        else None
+    )
     draft = ExecutionGatewayReport.model_construct(
         gateway_report_id="GATEWAYREPORT:PLACEHOLDER",
         gateway_report_hash="0" * 64,
@@ -478,6 +523,15 @@ def make_execution_gateway_report(
         source_replay_report_hash=(
             source_replay_report.replay_report_hash if source_replay_report is not None else None
         ),
+        source_replay_final_account_state_id=(
+            build_execution_gateway_account_state_id(
+                account_state_hash=source_final_account_state_hash
+            )
+            if source_final_account_state_hash is not None
+            else None
+        ),
+        source_replay_final_account_state_hash=source_final_account_state_hash,
+        source_replay_final_account_state=source_final_account_state,
         requirement_ids=requirement_ids,
     )
     report_hash = build_execution_gateway_report_hash(report=draft)
@@ -583,6 +637,15 @@ def build_execution_gateway_report_hash(*, report: ExecutionGatewayReport) -> st
             "run_id": report.run_id,
             "source_replay_report_hash": report.source_replay_report_hash,
             "source_replay_report_id": report.source_replay_report_id,
+            "source_replay_final_account_state": (
+                _model_json(report.source_replay_final_account_state)
+                if report.source_replay_final_account_state is not None
+                else None
+            ),
+            "source_replay_final_account_state_hash": (
+                report.source_replay_final_account_state_hash
+            ),
+            "source_replay_final_account_state_id": report.source_replay_final_account_state_id,
             "source_risk_gated_replay_result_hash": report.source_risk_gated_replay_result_hash,
             "source_risk_gated_replay_result_id": report.source_risk_gated_replay_result_id,
         }
@@ -591,6 +654,16 @@ def build_execution_gateway_report_hash(*, report: ExecutionGatewayReport) -> st
 
 def build_execution_gateway_report_id(*, report_hash: str) -> str:
     return _stable_id("GATEWAYREPORT", {"gateway_report_hash": report_hash})
+
+
+def build_execution_gateway_account_state_hash(
+    *, account_state: SimulatedAccountState
+) -> str:
+    return _hash(_model_json(account_state))
+
+
+def build_execution_gateway_account_state_id(*, account_state_hash: str) -> str:
+    return _stable_id("GATEWAYACCOUNTSTATE", {"account_state_hash": account_state_hash})
 
 
 def _validate_gateway_fill_mode(
