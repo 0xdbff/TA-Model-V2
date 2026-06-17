@@ -36,7 +36,16 @@ from ta_model.contracts.decisions import (
     StrategySizingInputs,
     make_strategy_decision_policy,
 )
-from ta_model.contracts.execution import ExecutionGatewayOrderStatus, ExecutionGatewayReport
+from ta_model.contracts.execution import (
+    ExecutionGatewayLifecycleEvent,
+    ExecutionGatewayOrderStatus,
+    ExecutionGatewayReport,
+    build_execution_gateway_event_hash,
+    build_execution_gateway_event_id,
+    build_execution_gateway_order_id,
+    build_execution_gateway_report_hash,
+    build_execution_gateway_report_id,
+)
 from ta_model.contracts.forecasts import (
     CalibrationStatus,
     Forecast,
@@ -230,6 +239,86 @@ def test_mismatched_trace_or_source_ids_are_rejected_by_risk_and_audit_validatio
         )
 
 
+def test_gateway_order_identity_spoof_is_rejected_after_deterministic_report_rebuild() -> None:
+    evidence = _approved_trace_evidence()
+    spoofed_gateway_report = _gateway_report_with_spoofed_client_order_id(
+        report=evidence.gateway_report,
+        client_order_id="ORDERINTENT:S11-SPOOFED",
+    )
+    spoofed_session_report = make_paper_account_session_report(
+        gateway_report=spoofed_gateway_report,
+        initial_account_state=account_state(),
+    )
+    spoofed_tca_report = make_paper_tca_report(
+        gateway_report=spoofed_gateway_report,
+        quotes=(_quote(event_ts=spoofed_gateway_report.events[0].submitted_at),),
+    )
+
+    assert spoofed_gateway_report.events[0].risk_check_id == evidence.risk_event.risk_check_id
+    assert spoofed_gateway_report.events[0].trace_id == evidence.decision.trace_id
+    assert spoofed_gateway_report.events[0].source_decision_id == evidence.decision.decision_id
+    assert spoofed_gateway_report.events[0].client_order_id != evidence.order_intent.client_order_id
+
+    with pytest.raises(ValueError, match="gateway client_order_id"):
+        make_decision_trace_envelope(
+            forecast=evidence.forecast,
+            decision=evidence.decision,
+            order_intent=evidence.order_intent,
+            risk_event=evidence.risk_event,
+            gateway_report=spoofed_gateway_report,
+            paper_account_report=spoofed_session_report,
+            paper_tca_report=spoofed_tca_report,
+        )
+
+
+def test_risk_blocked_trace_envelope_links_rejection_and_tca_issue_without_fill() -> None:
+    forecast = _forecast(median="0.050", uncertainty="0.000")
+    decision = _decision(
+        forecast=forecast,
+        sizing_inputs=_sizing_inputs(risk_budget_notional="300"),
+    )
+    order_intent = build_order_intent_from_strategy_decision(
+        decision=decision,
+        submitted_at=decision.decision_ts,
+    )
+    risk_event = evaluate_pre_trade_risk(
+        request=risk_request(order_intent=order_intent, decision_ts=decision.decision_ts),
+        policy=default_policy(),
+    )
+    initial_state = account_state()
+    gateway_report = run_paper_gateway_replay(
+        bars=(bar(0), bar(1), bar(2)),
+        risk_events=(risk_event,),
+        run_id="PAPER:S11:TRACE-BLOCKED",
+        instrument_master_snapshot=load_snapshot(),
+        starting_account_state=initial_state,
+    )
+    session_report = make_paper_account_session_report(
+        gateway_report=gateway_report,
+        initial_account_state=initial_state,
+    )
+    tca_report = make_paper_tca_report(gateway_report=gateway_report, quotes=())
+
+    envelope = make_decision_trace_envelope(
+        forecast=forecast,
+        decision=decision,
+        order_intent=order_intent,
+        risk_event=risk_event,
+        gateway_report=gateway_report,
+        paper_account_report=session_report,
+        paper_tca_report=tca_report,
+    )
+
+    assert risk_event.final_decision is RiskDecisionStatus.REJECTED
+    assert gateway_report.events[0].status is ExecutionGatewayOrderStatus.BLOCKED
+    assert envelope.risk_decision is RiskDecisionStatus.REJECTED
+    assert envelope.gateway_order_id is None
+    assert envelope.paper_fill_log_ids == ()
+    assert envelope.paper_rejection_log_ids == (session_report.rejection_logs[0].rejection_log_id,)
+    assert envelope.paper_tca_row_ids == ()
+    assert envelope.paper_tca_issue_ids == (tca_report.issues[0].issue_id,)
+
+
 def _approved_trace_evidence() -> ApprovedTraceEvidence:
     forecast = _forecast(median="0.050", uncertainty="0.000")
     decision = _decision(forecast=forecast, sizing_inputs=_sizing_inputs())
@@ -289,6 +378,54 @@ def _envelope(evidence: ApprovedTraceEvidence) -> DecisionTraceEnvelope:
         gateway_report=evidence.gateway_report,
         paper_account_report=evidence.session_report,
         paper_tca_report=evidence.tca_report,
+    )
+
+
+def _gateway_report_with_spoofed_client_order_id(
+    *, report: ExecutionGatewayReport, client_order_id: str
+) -> ExecutionGatewayReport:
+    event = report.events[0]
+    draft_event = event.model_copy(
+        update={
+            "gateway_event_id": "GATEWAYEVENT:PLACEHOLDER",
+            "gateway_event_hash": "0" * 64,
+            "client_order_id": client_order_id,
+            "gateway_order_id": None,
+        }
+    )
+    gateway_order_id = (
+        None
+        if draft_event.status is ExecutionGatewayOrderStatus.BLOCKED
+        else build_execution_gateway_order_id(event=draft_event)
+    )
+    draft_event = draft_event.model_copy(update={"gateway_order_id": gateway_order_id})
+    gateway_event_hash = build_execution_gateway_event_hash(event=draft_event)
+    spoofed_event = ExecutionGatewayLifecycleEvent.model_validate(
+        draft_event.model_dump(exclude={"gateway_event_id", "gateway_event_hash"})
+        | {
+            "gateway_event_id": build_execution_gateway_event_id(
+                event_hash=gateway_event_hash
+            ),
+            "gateway_event_hash": gateway_event_hash,
+        }
+    )
+    draft_report = report.model_copy(
+        update={
+            "gateway_report_id": "GATEWAYREPORT:PLACEHOLDER",
+            "gateway_report_hash": "0" * 64,
+            "gateway_event_ids": (spoofed_event.gateway_event_id,),
+            "events": (spoofed_event,),
+        }
+    )
+    gateway_report_hash = build_execution_gateway_report_hash(report=draft_report)
+    return ExecutionGatewayReport.model_validate(
+        draft_report.model_dump(exclude={"gateway_report_id", "gateway_report_hash"})
+        | {
+            "gateway_report_id": build_execution_gateway_report_id(
+                report_hash=gateway_report_hash
+            ),
+            "gateway_report_hash": gateway_report_hash,
+        }
     )
 
 
@@ -369,9 +506,9 @@ def _policy() -> StrategyDecisionPolicy:
     )
 
 
-def _sizing_inputs() -> StrategySizingInputs:
+def _sizing_inputs(*, risk_budget_notional: str = "100") -> StrategySizingInputs:
     return StrategySizingInputs(
-        risk_budget_notional=Decimal("100"),
+        risk_budget_notional=Decimal(risk_budget_notional),
         reference_price=Decimal("100"),
         current_drawdown=Decimal("0"),
         max_drawdown=Decimal("0.20"),

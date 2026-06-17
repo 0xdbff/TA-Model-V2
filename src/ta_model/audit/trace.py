@@ -317,6 +317,11 @@ def make_decision_trace_envelope(
         risk_event=risk_event,
         decision=decision,
     )
+    _validate_gateway_event_matches_risk_order(
+        gateway_event=gateway_event,
+        risk_event=risk_event,
+        order_intent=order_intent,
+    )
     paper_order_log_ids, paper_fill_log_ids, paper_rejection_log_ids = _paper_account_ids_for_event(
         paper_account_report=paper_account_report,
         gateway_report=gateway_report,
@@ -528,6 +533,37 @@ def _validate_risk_event_matches_order(
             raise ValueError("approved risk intent trace_id must match strategy decision")
         if risk_event.approved_order_intent.source_decision_id != decision.decision_id:
             raise ValueError("approved risk intent source_decision_id must match decision")
+        approved_identity_checks: tuple[tuple[object, object, str], ...] = (
+            (
+                risk_event.approved_order_intent.client_order_id,
+                order_intent.client_order_id,
+                "approved risk intent client_order_id",
+            ),
+            (
+                risk_event.approved_order_intent.instrument_id,
+                order_intent.instrument_id,
+                "approved risk intent instrument_id",
+            ),
+            (
+                risk_event.approved_order_intent.venue_id,
+                order_intent.venue_id,
+                "approved risk intent venue_id",
+            ),
+            (risk_event.approved_order_intent.side, order_intent.side, "approved risk intent side"),
+            (
+                risk_event.approved_order_intent.order_type,
+                order_intent.order_type,
+                "approved risk intent order_type",
+            ),
+            (
+                risk_event.approved_order_intent.submitted_at,
+                order_intent.submitted_at,
+                "approved risk intent submitted_at",
+            ),
+        )
+        for actual, expected, label in approved_identity_checks:
+            if actual != expected:
+                raise ValueError(f"{label} must match audited order intent")
 
 
 def _matching_gateway_event(
@@ -547,6 +583,60 @@ def _matching_gateway_event(
     if len(matches) != 1:
         raise ValueError("gateway report must contain exactly one matching trace event")
     return matches[0]
+
+
+def _validate_gateway_event_matches_risk_order(
+    *,
+    gateway_event: ExecutionGatewayLifecycleEvent,
+    risk_event: RiskCheckEvent,
+    order_intent: OrderIntent,
+) -> None:
+    risk_request_intent = risk_event.request.order_intent
+    expected_gateway_intent = risk_event.approved_order_intent or risk_request_intent
+    checks: tuple[tuple[object, object, str], ...] = (
+        (
+            gateway_event.client_order_id,
+            expected_gateway_intent.client_order_id,
+            "gateway client_order_id",
+        ),
+        (
+            gateway_event.instrument_id,
+            expected_gateway_intent.instrument_id,
+            "gateway instrument_id",
+        ),
+        (gateway_event.venue_id, expected_gateway_intent.venue_id, "gateway venue_id"),
+        (gateway_event.side, expected_gateway_intent.side, "gateway side"),
+        (gateway_event.order_type, expected_gateway_intent.order_type, "gateway order_type"),
+        (
+            gateway_event.submitted_at,
+            expected_gateway_intent.submitted_at,
+            "gateway submitted_at",
+        ),
+        (
+            gateway_event.requested_quantity,
+            risk_request_intent.quantity,
+            "gateway requested_quantity",
+        ),
+        (
+            gateway_event.requested_quantity,
+            order_intent.quantity,
+            "gateway requested_quantity",
+        ),
+        (
+            gateway_event.gateway_quantity,
+            expected_gateway_intent.quantity,
+            "gateway quantity",
+        ),
+        (gateway_event.risk_decision, risk_event.final_decision, "gateway risk_decision"),
+        (
+            gateway_event.risk_reason_codes,
+            risk_event.reason_codes,
+            "gateway risk_reason_codes",
+        ),
+    )
+    for actual, expected, label in checks:
+        if actual != expected:
+            raise ValueError(f"{label} must match audited risk/order evidence")
 
 
 def _paper_account_ids_for_event(
