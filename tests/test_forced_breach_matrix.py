@@ -33,6 +33,7 @@ from ta_model.contracts.instrument_master import (
     VenueStatus,
 )
 from ta_model.contracts.risk import (
+    EngineLatencyTelemetry,
     ExecutionRejectBurstWindow,
     KillSwitchState,
     LiquidityRiskTelemetry,
@@ -68,6 +69,7 @@ from ta_model.risk.replay import replay_risk_approved_market_orders
 
 @dataclass(frozen=True)
 class ForcedBreachCase:
+    case_id: str
     limit_id: str
     reason_code: RiskReasonCode
     request_factory: Callable[[], RiskCheckRequest]
@@ -76,6 +78,7 @@ class ForcedBreachCase:
 def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
     return (
         ForcedBreachCase(
+            "product-scope-outside-mvp",
             "scope.product_mvp",
             RiskReasonCode.OUTSIDE_MVP_SCOPE,
             lambda: risk_request(
@@ -85,6 +88,7 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "required-state-account-read-only",
             "config.required_state",
             RiskReasonCode.REQUIRED_STATE_MISSING,
             lambda: risk_request(
@@ -92,11 +96,13 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "kill-switch-pause-new-orders",
             "kill_switch.active_state",
             RiskReasonCode.KILL_SWITCH_ACTIVE,
             lambda: risk_request(kill_state=KillSwitchState.PAUSE_NEW_ORDERS),
         ),
         ForcedBreachCase(
+            "order-notional-hard",
             "order.max_notional",
             RiskReasonCode.ORDER_MAX_NOTIONAL_HARD,
             lambda: risk_request(
@@ -104,11 +110,21 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "price-collar-marketable-soft-breach",
             "order.price_collar",
             RiskReasonCode.ORDER_PRICE_COLLAR_HARD,
             lambda: risk_request(price_risk=PriceRiskTelemetry(price_deviation_bps=Decimal("60"))),
         ),
         ForcedBreachCase(
+            "price-collar-missing-reference",
+            "order.price_collar",
+            RiskReasonCode.ORDER_PRICE_COLLAR_HARD,
+            lambda: risk_request(
+                price_risk=PriceRiskTelemetry(reference_price_available=False)
+            ),
+        ),
+        ForcedBreachCase(
+            "instrument-exposure-hard",
             "position.instrument_exposure",
             RiskReasonCode.POSITION_INSTRUMENT_EXPOSURE_HARD,
             lambda: risk_request(
@@ -117,6 +133,7 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "strategy-exposure-hard",
             "position.strategy_exposure",
             RiskReasonCode.POSITION_STRATEGY_EXPOSURE_HARD,
             lambda: risk_request(
@@ -125,11 +142,25 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "total-spot-exposure-hard",
             "position.total_spot_exposure",
             RiskReasonCode.POSITION_TOTAL_SPOT_EXPOSURE_HARD,
             lambda: risk_request(current_total_spot_exposure=Decimal("5990")),
         ),
         ForcedBreachCase(
+            "cash-reserve-hard",
+            "position.total_spot_exposure",
+            RiskReasonCode.CASH_RESERVE_HARD,
+            lambda: risk_request(
+                current_cash=Decimal("3100"),
+                order_intent=intent(
+                    quantity=Decimal("1.5"),
+                    order_id="ORDER:S9:MATRIX-CASH-RESERVE",
+                ),
+            ),
+        ),
+        ForcedBreachCase(
+            "no-short-oversell",
             "position.no_short_or_oversell",
             RiskReasonCode.NO_SHORT_OR_OVERSELL,
             lambda: risk_request(
@@ -145,6 +176,7 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "daily-account-loss-hard",
             "loss.daily_account",
             RiskReasonCode.DAILY_ACCOUNT_LOSS_HARD,
             lambda: risk_request(
@@ -152,6 +184,7 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "daily-strategy-loss-hard",
             "loss.daily_strategy",
             RiskReasonCode.DAILY_STRATEGY_LOSS_HARD,
             lambda: risk_request(
@@ -159,6 +192,7 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "max-drawdown-hard",
             "loss.max_drawdown",
             RiskReasonCode.MAX_DRAWDOWN_HARD,
             lambda: risk_request(
@@ -166,6 +200,7 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "participation-hard-volume",
             "liquidity.participation",
             RiskReasonCode.LIQUIDITY_PARTICIPATION_HARD,
             lambda: risk_request(
@@ -175,6 +210,15 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "participation-hard-depth-unavailable",
+            "liquidity.participation",
+            RiskReasonCode.LIQUIDITY_PARTICIPATION_HARD,
+            lambda: risk_request(
+                liquidity_risk=LiquidityRiskTelemetry(depth_metric_required=True)
+            ),
+        ),
+        ForcedBreachCase(
+            "spread-hard-threshold",
             "liquidity.spread",
             RiskReasonCode.LIQUIDITY_SPREAD_HARD,
             lambda: risk_request(
@@ -182,6 +226,15 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "spread-hard-missing",
+            "liquidity.spread",
+            RiskReasonCode.LIQUIDITY_SPREAD_HARD,
+            lambda: risk_request(
+                liquidity_risk=LiquidityRiskTelemetry(current_spread_bps=None)
+            ),
+        ),
+        ForcedBreachCase(
+            "volatility-hard-threshold",
             "market.volatility",
             RiskReasonCode.MARKET_VOLATILITY_HARD,
             lambda: risk_request(
@@ -189,11 +242,13 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "data-health-block",
             "data.freshness",
             RiskReasonCode.DATA_HEALTH_BLOCK,
             lambda: risk_request(data_health_signals=(_blocking_data_health_signal(),)),
         ),
         ForcedBreachCase(
+            "venue-halted",
             "venue.status",
             RiskReasonCode.VENUE_STATUS_HARD,
             lambda: risk_request(
@@ -201,72 +256,162 @@ def _forced_breach_cases() -> tuple[ForcedBreachCase, ...]:
             ),
         ),
         ForcedBreachCase(
+            "order-throttle-hard",
             "execution.order_throttle",
             RiskReasonCode.ORDER_THROTTLE_HARD,
             lambda: risk_request(throttle_windows=(_hard_throttle_window(),)),
         ),
         ForcedBreachCase(
+            "duplicate-idempotency-unresolved",
             "execution.duplicate_idempotency",
             RiskReasonCode.DUPLICATE_IDEMPOTENCY,
             lambda: _duplicate_idempotency_request(),
         ),
         ForcedBreachCase(
+            "reject-burst-hard",
             "execution.reject_burst",
             RiskReasonCode.REJECT_BURST_HARD,
             lambda: risk_request(reject_burst_windows=(_hard_reject_burst_window(),)),
         ),
         ForcedBreachCase(
+            "engine-latency-budget-exceeded",
             "engine.latency",
             RiskReasonCode.ENGINE_LATENCY_HARD,
             lambda: risk_request(risk_check_ts=START + timedelta(minutes=3)),
         ),
         ForcedBreachCase(
+            "engine-latency-event-time-invalid",
+            "engine.latency",
+            RiskReasonCode.ENGINE_LATENCY_HARD,
+            lambda: risk_request(
+                engine_latency=EngineLatencyTelemetry(event_time_validity_proven=False)
+            ),
+        ),
+        ForcedBreachCase(
+            "model-calibration-hard",
             "model.drift_or_calibration",
             RiskReasonCode.MODEL_DRIFT_OR_CALIBRATION_HARD,
             lambda: risk_request(model_risk=ModelRiskTelemetry(calibrated_outputs=False)),
         ),
         ForcedBreachCase(
+            "tca-hard-threshold",
             "tca.cost_slippage",
             RiskReasonCode.TCA_COST_SLIPPAGE_HARD,
             lambda: risk_request(
                 tca_risk=TcaRiskTelemetry(cost_slippage_multiplier=Decimal("3.1"))
             ),
         ),
+        ForcedBreachCase(
+            "tca-unavailable",
+            "tca.cost_slippage",
+            RiskReasonCode.TCA_COST_SLIPPAGE_HARD,
+            lambda: risk_request(tca_risk=TcaRiskTelemetry(tca_available=False)),
+        ),
     )
 
 
 def test_forced_breach_matrix_covers_required_s0_003_hard_limits() -> None:
-    assert tuple(case.limit_id for case in _forced_breach_cases()) == (
-        "scope.product_mvp",
-        "config.required_state",
-        "kill_switch.active_state",
-        "order.max_notional",
-        "order.price_collar",
-        "position.instrument_exposure",
-        "position.strategy_exposure",
-        "position.total_spot_exposure",
-        "position.no_short_or_oversell",
-        "loss.daily_account",
-        "loss.daily_strategy",
-        "loss.max_drawdown",
-        "liquidity.participation",
-        "liquidity.spread",
-        "market.volatility",
-        "data.freshness",
-        "venue.status",
-        "execution.order_throttle",
-        "execution.duplicate_idempotency",
-        "execution.reject_burst",
-        "engine.latency",
-        "model.drift_or_calibration",
-        "tca.cost_slippage",
+    actual = tuple(
+        (case.case_id, case.limit_id, case.reason_code) for case in _forced_breach_cases()
     )
+    expected = (
+        ("product-scope-outside-mvp", "scope.product_mvp", RiskReasonCode.OUTSIDE_MVP_SCOPE),
+        (
+            "required-state-account-read-only",
+            "config.required_state",
+            RiskReasonCode.REQUIRED_STATE_MISSING,
+        ),
+        (
+            "kill-switch-pause-new-orders",
+            "kill_switch.active_state",
+            RiskReasonCode.KILL_SWITCH_ACTIVE,
+        ),
+        ("order-notional-hard", "order.max_notional", RiskReasonCode.ORDER_MAX_NOTIONAL_HARD),
+        (
+            "price-collar-marketable-soft-breach",
+            "order.price_collar",
+            RiskReasonCode.ORDER_PRICE_COLLAR_HARD,
+        ),
+        (
+            "price-collar-missing-reference",
+            "order.price_collar",
+            RiskReasonCode.ORDER_PRICE_COLLAR_HARD,
+        ),
+        (
+            "instrument-exposure-hard",
+            "position.instrument_exposure",
+            RiskReasonCode.POSITION_INSTRUMENT_EXPOSURE_HARD,
+        ),
+        (
+            "strategy-exposure-hard",
+            "position.strategy_exposure",
+            RiskReasonCode.POSITION_STRATEGY_EXPOSURE_HARD,
+        ),
+        (
+            "total-spot-exposure-hard",
+            "position.total_spot_exposure",
+            RiskReasonCode.POSITION_TOTAL_SPOT_EXPOSURE_HARD,
+        ),
+        ("cash-reserve-hard", "position.total_spot_exposure", RiskReasonCode.CASH_RESERVE_HARD),
+        (
+            "no-short-oversell",
+            "position.no_short_or_oversell",
+            RiskReasonCode.NO_SHORT_OR_OVERSELL,
+        ),
+        ("daily-account-loss-hard", "loss.daily_account", RiskReasonCode.DAILY_ACCOUNT_LOSS_HARD),
+        (
+            "daily-strategy-loss-hard",
+            "loss.daily_strategy",
+            RiskReasonCode.DAILY_STRATEGY_LOSS_HARD,
+        ),
+        ("max-drawdown-hard", "loss.max_drawdown", RiskReasonCode.MAX_DRAWDOWN_HARD),
+        (
+            "participation-hard-volume",
+            "liquidity.participation",
+            RiskReasonCode.LIQUIDITY_PARTICIPATION_HARD,
+        ),
+        (
+            "participation-hard-depth-unavailable",
+            "liquidity.participation",
+            RiskReasonCode.LIQUIDITY_PARTICIPATION_HARD,
+        ),
+        ("spread-hard-threshold", "liquidity.spread", RiskReasonCode.LIQUIDITY_SPREAD_HARD),
+        ("spread-hard-missing", "liquidity.spread", RiskReasonCode.LIQUIDITY_SPREAD_HARD),
+        (
+            "volatility-hard-threshold",
+            "market.volatility",
+            RiskReasonCode.MARKET_VOLATILITY_HARD,
+        ),
+        ("data-health-block", "data.freshness", RiskReasonCode.DATA_HEALTH_BLOCK),
+        ("venue-halted", "venue.status", RiskReasonCode.VENUE_STATUS_HARD),
+        ("order-throttle-hard", "execution.order_throttle", RiskReasonCode.ORDER_THROTTLE_HARD),
+        (
+            "duplicate-idempotency-unresolved",
+            "execution.duplicate_idempotency",
+            RiskReasonCode.DUPLICATE_IDEMPOTENCY,
+        ),
+        ("reject-burst-hard", "execution.reject_burst", RiskReasonCode.REJECT_BURST_HARD),
+        ("engine-latency-budget-exceeded", "engine.latency", RiskReasonCode.ENGINE_LATENCY_HARD),
+        (
+            "engine-latency-event-time-invalid",
+            "engine.latency",
+            RiskReasonCode.ENGINE_LATENCY_HARD,
+        ),
+        (
+            "model-calibration-hard",
+            "model.drift_or_calibration",
+            RiskReasonCode.MODEL_DRIFT_OR_CALIBRATION_HARD,
+        ),
+        ("tca-hard-threshold", "tca.cost_slippage", RiskReasonCode.TCA_COST_SLIPPAGE_HARD),
+        ("tca-unavailable", "tca.cost_slippage", RiskReasonCode.TCA_COST_SLIPPAGE_HARD),
+    )
+    assert actual == expected
 
 
 @pytest.mark.parametrize(
     "case",
     _forced_breach_cases(),
-    ids=lambda case: case.limit_id,
+    ids=lambda case: case.case_id,
 )
 def test_each_forced_breach_rejects_without_approved_intent(case: ForcedBreachCase) -> None:
     event = evaluate_pre_trade_risk(request=case.request_factory(), policy=default_policy())

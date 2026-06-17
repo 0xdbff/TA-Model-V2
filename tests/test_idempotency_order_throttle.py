@@ -94,7 +94,7 @@ def test_hard_order_throttle_breach_rejects_new_intent() -> None:
     assert throttle_limit.hard_threshold == Decimal("10")
 
 
-def test_soft_order_throttle_breach_is_recorded_without_hard_rejection() -> None:
+def test_soft_order_throttle_breach_no_trades_without_safe_cap() -> None:
     throttle = OrderThrottleWindow(
         scope_type=OrderThrottleScopeType.STRATEGY_INSTRUMENT,
         scope_id="STRATEGY:S9:BTC-USD",
@@ -113,6 +113,7 @@ def test_soft_order_throttle_breach_is_recorded_without_hard_rejection() -> None
         for evaluation in event.limit_evaluations
         if evaluation.limit_id == "execution.order_throttle"
     )
-    assert event.final_decision is RiskDecisionStatus.APPROVED
+    assert event.final_decision is RiskDecisionStatus.NO_TRADE
+    assert event.approved_order_intent is None
     assert throttle_limit.status is RiskLimitStatus.SOFT_BREACH
     assert throttle_limit.reason_code is RiskReasonCode.ORDER_THROTTLE_SOFT

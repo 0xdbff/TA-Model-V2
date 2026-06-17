@@ -7,6 +7,9 @@ from decimal import Decimal
 from risk_test_helpers import default_policy, intent, risk_request
 from ta_model.contracts.risk import (
     KillSwitchState,
+    LiquidityRiskTelemetry,
+    LossRiskTelemetry,
+    MarketRiskTelemetry,
     RiskDecisionStatus,
     RiskLimitStatus,
     RiskReasonCode,
@@ -82,6 +85,108 @@ def test_soft_exposure_cap_at_existing_limit_becomes_no_trade_without_approved_i
     assert exposure_limit.status is RiskLimitStatus.SOFT_BREACH
     assert exposure_limit.reason_code is RiskReasonCode.POSITION_INSTRUMENT_EXPOSURE_SOFT
     assert exposure_limit.capped_value == Decimal("1500.00")
+
+
+def test_soft_liquidity_participation_breach_caps_buy_intent_before_approval() -> None:
+    request = risk_request(
+        liquidity_risk=LiquidityRiskTelemetry(
+            rolling_24h_quote_volume_notional=Decimal("15000")
+        ),
+        order_intent=intent(order_id="ORDER:S9:SOFT-LIQUIDITY-CAP"),
+    )
+
+    event = evaluate_pre_trade_risk(request=request, policy=default_policy())
+
+    liquidity_limit = next(
+        evaluation
+        for evaluation in event.limit_evaluations
+        if evaluation.limit_id == "liquidity.participation"
+    )
+    assert event.final_decision is RiskDecisionStatus.APPROVED_AFTER_CAP
+    assert event.approved_order_intent is not None
+    assert event.approved_order_intent.quantity == Decimal("0.75000")
+    assert liquidity_limit.status is RiskLimitStatus.SOFT_BREACH
+    assert liquidity_limit.reason_code is RiskReasonCode.LIQUIDITY_PARTICIPATION_SOFT
+    assert liquidity_limit.capped_value == Decimal("75.000")
+
+
+def test_soft_daily_account_loss_requires_no_trade_without_approved_intent() -> None:
+    request = risk_request(
+        loss_risk=LossRiskTelemetry(daily_account_pnl=Decimal("-150")),
+        order_intent=intent(order_id="ORDER:S9:SOFT-DAILY-LOSS"),
+    )
+
+    event = evaluate_pre_trade_risk(request=request, policy=default_policy())
+
+    loss_limit = next(
+        evaluation
+        for evaluation in event.limit_evaluations
+        if evaluation.limit_id == "loss.daily_account"
+    )
+    assert event.final_decision is RiskDecisionStatus.NO_TRADE
+    assert event.approved_order_intent is None
+    assert loss_limit.status is RiskLimitStatus.SOFT_BREACH
+    assert loss_limit.reason_code is RiskReasonCode.DAILY_ACCOUNT_LOSS_SOFT
+
+
+def test_soft_drawdown_requires_no_trade_without_approved_intent() -> None:
+    request = risk_request(
+        loss_risk=LossRiskTelemetry(max_drawdown_pct=Decimal("0.06")),
+        order_intent=intent(order_id="ORDER:S9:SOFT-DRAWDOWN"),
+    )
+
+    event = evaluate_pre_trade_risk(request=request, policy=default_policy())
+
+    drawdown_limit = next(
+        evaluation
+        for evaluation in event.limit_evaluations
+        if evaluation.limit_id == "loss.max_drawdown"
+    )
+    assert event.final_decision is RiskDecisionStatus.NO_TRADE
+    assert event.approved_order_intent is None
+    assert drawdown_limit.status is RiskLimitStatus.SOFT_BREACH
+    assert drawdown_limit.reason_code is RiskReasonCode.MAX_DRAWDOWN_SOFT
+
+
+def test_soft_volatility_requires_no_trade_without_approved_intent() -> None:
+    request = risk_request(
+        market_risk=MarketRiskTelemetry(volatility_envelope_multiplier=Decimal("2.5")),
+        order_intent=intent(order_id="ORDER:S9:SOFT-VOLATILITY"),
+    )
+
+    event = evaluate_pre_trade_risk(request=request, policy=default_policy())
+
+    volatility_limit = next(
+        evaluation
+        for evaluation in event.limit_evaluations
+        if evaluation.limit_id == "market.volatility"
+    )
+    assert event.final_decision is RiskDecisionStatus.NO_TRADE
+    assert event.approved_order_intent is None
+    assert volatility_limit.status is RiskLimitStatus.SOFT_BREACH
+    assert volatility_limit.reason_code is RiskReasonCode.MARKET_VOLATILITY_SOFT
+
+
+def test_soft_daily_account_loss_allows_risk_decreasing_sell() -> None:
+    request = risk_request(
+        order_intent=intent(
+            side=OrderSide.SELL,
+            quantity=Decimal("0.5"),
+            order_id="ORDER:S9:SOFT-LOSS-REDUCE",
+        ),
+        current_position_quantity=Decimal("1"),
+        current_instrument_exposure=Decimal("100"),
+        current_strategy_exposure=Decimal("100"),
+        current_total_spot_exposure=Decimal("100"),
+        loss_risk=LossRiskTelemetry(daily_account_pnl=Decimal("-150")),
+    )
+
+    event = evaluate_pre_trade_risk(request=request, policy=default_policy())
+
+    assert event.final_decision is RiskDecisionStatus.APPROVED
+    assert event.approved_order_intent == request.order_intent
+    assert event.order_effect.risk_increasing is False
+    assert RiskReasonCode.DAILY_ACCOUNT_LOSS_SOFT in event.reason_codes
 
 
 def test_active_pause_new_orders_kill_switch_rejects_risk_increasing_orders() -> None:

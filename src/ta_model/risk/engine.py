@@ -182,16 +182,20 @@ def _approval_after_soft_caps(
     if request.order_intent.side is not OrderSide.BUY or not order_effect.risk_increasing:
         return RiskDecisionStatus.APPROVED, request.order_intent
 
-    allowed_incremental_notionals = tuple(
-        cap
-        for cap in (
-            _allowed_incremental_notional(request=request, evaluation=evaluation)
-            for evaluation in evaluations
-        )
-        if cap is not None
+    soft_breaches = tuple(
+        evaluation
+        for evaluation in evaluations
+        if evaluation.status is RiskLimitStatus.SOFT_BREACH
     )
-    if not allowed_incremental_notionals:
+    if not soft_breaches:
         return RiskDecisionStatus.APPROVED, request.order_intent
+
+    allowed_incremental_notionals: list[Decimal] = []
+    for evaluation in soft_breaches:
+        cap = _allowed_incremental_notional(request=request, evaluation=evaluation)
+        if cap is None:
+            return RiskDecisionStatus.NO_TRADE, None
+        allowed_incremental_notionals.append(cap)
 
     allowed_notional = min(allowed_incremental_notionals)
     if allowed_notional <= 0:
