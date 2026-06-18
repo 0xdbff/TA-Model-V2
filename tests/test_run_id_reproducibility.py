@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from risk_test_helpers import account_state, bar, default_policy, load_snapshot, risk_request
 from ta_model.audit import (
     AuditGateRecommendation,
@@ -13,11 +15,16 @@ from ta_model.audit import (
     AuditGateValidationStatus,
     DecisionTraceReplayBlockerCode,
     DecisionTraceReplayEvidence,
+    DecisionTraceReplayReport,
     DecisionTraceReplayStatus,
     InMemoryDecisionTraceEvidenceStore,
     build_order_intent_from_strategy_decision,
     make_audit_gate_run_config,
+    make_audit_gate_run_manifest,
+    make_audit_gate_trace_sample_result,
+    make_audit_gate_validation_report,
     make_decision_trace_envelope,
+    replay_decision_trace_by_id,
     run_audit_gate_validation,
 )
 from ta_model.contracts.execution import ExecutionGatewayOrderStatus
@@ -124,11 +131,77 @@ def test_audit_gate_validation_reports_missing_and_tampered_blockers() -> None:
     assert report.samples[1].replay_status is DecisionTraceReplayStatus.FAILED
 
 
+def test_duplicate_trace_ids_fail_policy_and_do_not_satisfy_minimum_sample_count() -> None:
+    evidence = _approved_replay_evidence()
+
+    report = run_audit_gate_validation(
+        trace_ids=(evidence.trace_id, evidence.trace_id, evidence.trace_id),
+        resolver=InMemoryDecisionTraceEvidenceStore((evidence,)),
+        config=_gate_config(minimum_sample_count=3, require_no_order_sample=False),
+    )
+
+    assert report.status is AuditGateValidationStatus.FAILED
+    assert report.passed_count == 3
+    assert report.failed_count == 0
+    assert report.blocker_count >= 2
+    assert any("unique" in blocker.message for blocker in report.blockers)
+    assert any(
+        blocker.message == "unique non-empty sample count is below the configured minimum"
+        and blocker.actual == "1"
+        for blocker in report.blockers
+    )
+
+
+def test_blank_trace_id_cannot_silently_pass_sample_policy() -> None:
+    report = run_audit_gate_validation(
+        trace_ids=("   ",),
+        resolver=InMemoryDecisionTraceEvidenceStore(()),
+        config=_gate_config(minimum_sample_count=1, require_no_order_sample=False),
+    )
+
+    assert report.status is AuditGateValidationStatus.FAILED
+    assert report.manifest.trace_id_policy_errors == (
+        "explicit trace_id at sample index 0 must be non-empty",
+    )
+    assert report.failed_count == 1
+    assert any("non-empty" in blocker.message for blocker in report.blockers)
+    assert any(blocker.actual == "0" for blocker in report.blockers)
+
+
+def test_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
+    fabricated = DecisionTraceReplayReport(
+        trace_id="TRACE:S11:FABRICATED-PASS",
+        status=DecisionTraceReplayStatus.PASSED,
+    )
+
+    with pytest.raises(ValueError, match="stored and reconstructed trace envelope"):
+        make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+
+
+def test_sample_manifest_trace_mismatch_fails_report_validation() -> None:
+    evidence = _approved_replay_evidence()
+    replay_report = replay_decision_trace_by_id(
+        trace_id=evidence.trace_id,
+        resolver=InMemoryDecisionTraceEvidenceStore((evidence,)),
+    )
+    sample = make_audit_gate_trace_sample_result(
+        sample_index=0,
+        replay_report=replay_report,
+    )
+    mismatched_manifest = make_audit_gate_run_manifest(
+        config=_gate_config(minimum_sample_count=1, require_no_order_sample=False),
+        trace_ids=("TRACE:S11:MANIFEST-MISMATCH",),
+    )
+
+    with pytest.raises(ValueError, match="sample trace IDs must match manifest"):
+        make_audit_gate_validation_report(manifest=mismatched_manifest, samples=(sample,))
+
+
 def _gate_config(
     *, minimum_sample_count: int = 3, require_no_order_sample: bool = True
 ) -> AuditGateRunConfig:
     return make_audit_gate_run_config(
-        code_commit="3418ec7b12e6d3710f546a144295718834c15ef8",
+        code_commit="fixture-s11-repro-gate-code-commit",
         code_ref="agent/s11-repro-gate-6f17",
         sample_policy=AuditGateSamplePolicy(
             description="S11 audit gate fixture: approved-fill, risk-blocked, no-trade",

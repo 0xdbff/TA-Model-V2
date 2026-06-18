@@ -66,6 +66,8 @@ class AuditGateValidationBlockerCode(StrEnum):
     """Gate-level failure codes."""
 
     SAMPLE_REPLAY_FAILED = "sample_replay_failed"
+    SAMPLE_REPLAY_EVIDENCE_INVALID = "sample_replay_evidence_invalid"
+    SAMPLE_MANIFEST_MISMATCH = "sample_manifest_mismatch"
     SAMPLE_POLICY_NOT_MET = "sample_policy_not_met"
 
 
@@ -116,6 +118,7 @@ class AuditGateRunManifest(ContractModel):
     sample_policy: AuditGateSamplePolicy
     tolerance_policy: AuditGateTolerancePolicy
     trace_ids: tuple[CanonicalId, ...] = ()
+    trace_id_policy_errors: tuple[NonEmptyString, ...] = ()
     requirement_ids: tuple[NonEmptyString, ...] = _AUDIT_GATE_REQUIREMENTS
 
     @model_validator(mode="after")
@@ -173,6 +176,10 @@ class AuditGateTraceSampleResult(ContractModel):
             raise ValueError("sample trace_id must match replay report trace_id")
         if self.replay_status is not self.replay_report.status:
             raise ValueError("sample replay_status must match replay report status")
+        _validate_sample_replay_field_alignment(sample=self)
+        evidence_error = _sample_replay_evidence_error(sample=self)
+        if evidence_error is not None:
+            raise ValueError(evidence_error)
         expected_replay_hash = build_decision_trace_replay_report_hash(
             report=self.replay_report
         )
@@ -214,6 +221,9 @@ class AuditGateValidationReport(ContractModel):
     def report_identity_and_metrics_are_deterministic(self) -> Self:
         if self.audit_run_id != self.manifest.audit_run_id:
             raise ValueError("report audit_run_id must match manifest")
+        sample_trace_ids = tuple(sample.trace_id for sample in self.samples)
+        if sample_trace_ids != self.manifest.trace_ids:
+            raise ValueError("sample trace IDs must match manifest trace_ids in order")
         if self.sample_count != len(self.samples):
             raise ValueError("sample_count must match samples")
         if self.passed_count != _count_samples(
@@ -244,6 +254,8 @@ class AuditGateValidationReport(ContractModel):
         )
         if self.recommendation is not expected_recommendation:
             raise ValueError("recommendation must be derived from status")
+        if self.status is AuditGateValidationStatus.PASSED:
+            _validate_passing_report_has_valid_policy_and_samples(report=self)
         expected_hash = build_audit_gate_validation_report_hash(report=self)
         if self.report_hash != expected_hash:
             raise ValueError("report_hash is not deterministic")
@@ -282,7 +294,7 @@ def make_audit_gate_run_manifest(
 ) -> AuditGateRunManifest:
     """Build a deterministic run manifest from config and explicit trace IDs."""
 
-    normalized_trace_ids = tuple(_normalize_trace_id(trace_id) for trace_id in trace_ids)
+    normalized_trace_ids, trace_id_policy_errors = _normalize_trace_ids(trace_ids=trace_ids)
     draft = AuditGateRunManifest.model_construct(
         audit_run_id="AUDITRUN:PLACEHOLDER",
         manifest_hash="0" * 64,
@@ -292,6 +304,7 @@ def make_audit_gate_run_manifest(
         sample_policy=config.sample_policy,
         tolerance_policy=config.tolerance_policy,
         trace_ids=normalized_trace_ids,
+        trace_id_policy_errors=trace_id_policy_errors,
         requirement_ids=config.requirement_ids,
     )
     manifest_hash = build_audit_gate_run_manifest_hash(manifest=draft)
@@ -445,7 +458,18 @@ def _gate_blockers(
     *, manifest: AuditGateRunManifest, samples: tuple[AuditGateTraceSampleResult, ...]
 ) -> list[AuditGateValidationBlocker]:
     blockers: list[AuditGateValidationBlocker] = []
+    blockers.extend(_manifest_trace_policy_blockers(manifest=manifest))
+    blockers.extend(_sample_manifest_mismatch_blockers(manifest=manifest, samples=samples))
     for sample in samples:
+        evidence_error = _sample_replay_evidence_error(sample=sample)
+        if evidence_error is not None:
+            blockers.append(
+                AuditGateValidationBlocker(
+                    code=AuditGateValidationBlockerCode.SAMPLE_REPLAY_EVIDENCE_INVALID,
+                    trace_id=sample.trace_id,
+                    message=evidence_error,
+                )
+            )
         if sample.replay_status is not DecisionTraceReplayStatus.FAILED:
             continue
         if sample.replay_report.blockers:
@@ -460,13 +484,14 @@ def _gate_blockers(
             )
 
     policy = manifest.sample_policy
-    if len(samples) < policy.minimum_sample_count:
+    eligible_sample_count = len(_eligible_unique_trace_ids(manifest=manifest))
+    if eligible_sample_count < policy.minimum_sample_count:
         blockers.append(
             AuditGateValidationBlocker(
                 code=AuditGateValidationBlockerCode.SAMPLE_POLICY_NOT_MET,
-                message="sample count is below the configured minimum",
+                message="unique non-empty sample count is below the configured minimum",
                 expected=str(policy.minimum_sample_count),
-                actual=str(len(samples)),
+                actual=str(eligible_sample_count),
             )
         )
     no_order_count = _count_samples(samples=samples, status=DecisionTraceReplayStatus.NO_ORDER)
@@ -495,6 +520,47 @@ def _gate_blockers(
     return blockers
 
 
+def _manifest_trace_policy_blockers(
+    *, manifest: AuditGateRunManifest
+) -> list[AuditGateValidationBlocker]:
+    blockers = [
+        AuditGateValidationBlocker(
+            code=AuditGateValidationBlockerCode.SAMPLE_POLICY_NOT_MET,
+            message=error,
+            expected="non-empty trace_id",
+            actual="blank trace_id",
+        )
+        for error in manifest.trace_id_policy_errors
+    ]
+    duplicate_trace_ids = _duplicate_trace_ids(trace_ids=manifest.trace_ids)
+    if duplicate_trace_ids:
+        blockers.append(
+            AuditGateValidationBlocker(
+                code=AuditGateValidationBlockerCode.SAMPLE_POLICY_NOT_MET,
+                message="explicit audit gate trace IDs must be unique",
+                expected="unique trace_ids",
+                actual=",".join(duplicate_trace_ids),
+            )
+        )
+    return blockers
+
+
+def _sample_manifest_mismatch_blockers(
+    *, manifest: AuditGateRunManifest, samples: tuple[AuditGateTraceSampleResult, ...]
+) -> list[AuditGateValidationBlocker]:
+    sample_trace_ids = tuple(sample.trace_id for sample in samples)
+    if sample_trace_ids == manifest.trace_ids:
+        return []
+    return [
+        AuditGateValidationBlocker(
+            code=AuditGateValidationBlockerCode.SAMPLE_MANIFEST_MISMATCH,
+            message="sample trace IDs must match manifest trace_ids in order",
+            expected=",".join(manifest.trace_ids),
+            actual=",".join(sample_trace_ids),
+        )
+    ]
+
+
 def _replay_blockers(sample: AuditGateTraceSampleResult) -> list[AuditGateValidationBlocker]:
     blockers: list[AuditGateValidationBlocker] = []
     for replay_blocker in sample.replay_report.blockers:
@@ -517,9 +583,114 @@ def _count_samples(
     return sum(1 for sample in samples if sample.replay_status is status)
 
 
-def _normalize_trace_id(trace_id: str) -> str:
-    normalized = trace_id.strip()
-    return normalized or "TRACE:MISSING"
+_BLANK_TRACE_ID_PREFIX = "TRACE:INVALID-BLANK"
+
+
+def _normalize_trace_ids(*, trace_ids: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    normalized_trace_ids: list[str] = []
+    trace_id_policy_errors: list[str] = []
+    for index, trace_id in enumerate(trace_ids):
+        normalized = trace_id.strip()
+        if normalized:
+            normalized_trace_ids.append(normalized)
+            continue
+        normalized_trace_ids.append(f"{_BLANK_TRACE_ID_PREFIX}:{index}")
+        trace_id_policy_errors.append(
+            f"explicit trace_id at sample index {index} must be non-empty"
+        )
+    return tuple(normalized_trace_ids), tuple(trace_id_policy_errors)
+
+
+def _duplicate_trace_ids(*, trace_ids: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for trace_id in trace_ids:
+        if trace_id in seen and trace_id not in duplicates:
+            duplicates.append(trace_id)
+        seen.add(trace_id)
+    return tuple(duplicates)
+
+
+def _eligible_unique_trace_ids(*, manifest: AuditGateRunManifest) -> tuple[str, ...]:
+    unique_trace_ids: list[str] = []
+    for trace_id in manifest.trace_ids:
+        if trace_id.startswith(f"{_BLANK_TRACE_ID_PREFIX}:"):
+            continue
+        if trace_id not in unique_trace_ids:
+            unique_trace_ids.append(trace_id)
+    return tuple(unique_trace_ids)
+
+
+def _validate_sample_replay_field_alignment(*, sample: AuditGateTraceSampleResult) -> None:
+    checks: tuple[tuple[object, object, str], ...] = (
+        (
+            sample.stored_trace_envelope_id,
+            sample.replay_report.stored_trace_envelope_id,
+            "stored_trace_envelope_id",
+        ),
+        (
+            sample.stored_trace_envelope_hash,
+            sample.replay_report.stored_trace_envelope_hash,
+            "stored_trace_envelope_hash",
+        ),
+        (
+            sample.reconstructed_trace_envelope_id,
+            sample.replay_report.reconstructed_trace_envelope_id,
+            "reconstructed_trace_envelope_id",
+        ),
+        (
+            sample.reconstructed_trace_envelope_hash,
+            sample.replay_report.reconstructed_trace_envelope_hash,
+            "reconstructed_trace_envelope_hash",
+        ),
+    )
+    for actual, expected, label in checks:
+        if actual != expected:
+            raise ValueError(f"sample {label} must match replay report")
+
+
+def _sample_replay_evidence_error(sample: AuditGateTraceSampleResult) -> str | None:
+    has_stored_envelope = (
+        sample.stored_trace_envelope_id is not None
+        and sample.stored_trace_envelope_hash is not None
+    )
+    has_reconstructed_envelope = (
+        sample.reconstructed_trace_envelope_id is not None
+        and sample.reconstructed_trace_envelope_hash is not None
+    )
+    if sample.replay_status in (
+        DecisionTraceReplayStatus.PASSED,
+        DecisionTraceReplayStatus.NO_ORDER,
+    ):
+        if sample.replay_report.blockers:
+            return "passed/no-order replay samples must not include replay blockers"
+        if not has_stored_envelope or not has_reconstructed_envelope:
+            return (
+                "passed/no-order replay samples require stored and reconstructed "
+                "trace envelope IDs/hashes"
+            )
+        return None
+    if sample.replay_status is DecisionTraceReplayStatus.FAILED:
+        if not sample.replay_report.blockers:
+            return "failed replay samples require replay blockers"
+    return None
+
+
+def _validate_passing_report_has_valid_policy_and_samples(
+    *, report: AuditGateValidationReport
+) -> None:
+    if report.manifest.trace_id_policy_errors:
+        raise ValueError("passing audit gate reports require non-empty trace IDs")
+    if _duplicate_trace_ids(trace_ids=report.manifest.trace_ids):
+        raise ValueError("passing audit gate reports require unique trace IDs")
+    if len(_eligible_unique_trace_ids(manifest=report.manifest)) < (
+        report.manifest.sample_policy.minimum_sample_count
+    ):
+        raise ValueError("passing audit gate reports require enough unique non-empty trace IDs")
+    for sample in report.samples:
+        evidence_error = _sample_replay_evidence_error(sample=sample)
+        if evidence_error is not None:
+            raise ValueError(f"passing audit gate reports require valid samples: {evidence_error}")
 
 
 def _stable_id(prefix: str, payload: object) -> str:
