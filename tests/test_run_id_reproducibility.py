@@ -10,11 +10,8 @@ from pydantic import ValidationError
 import ta_model.audit as audit_api
 from risk_test_helpers import account_state, bar, default_policy, load_snapshot, risk_request
 from ta_model.audit import (
-    AuditGateRecommendation,
     AuditGateRunConfig,
     AuditGateSamplePolicy,
-    AuditGateValidationBlockerCode,
-    AuditGateValidationStatus,
     DecisionTraceReplayBlockerCode,
     DecisionTraceReplayEvidence,
     DecisionTraceReplayReport,
@@ -23,7 +20,6 @@ from ta_model.audit import (
     build_decision_trace_envelope_id,
     build_order_intent_from_strategy_decision,
     make_audit_gate_run_config,
-    make_audit_gate_run_manifest,
     make_decision_trace_envelope,
     replay_decision_trace_by_id,
     run_audit_gate_validation,
@@ -31,6 +27,7 @@ from ta_model.audit import (
 from ta_model.audit.gate import (
     _make_audit_gate_trace_sample_result,
     _make_audit_gate_validation_report,
+    make_audit_gate_run_manifest,
 )
 from ta_model.contracts.execution import ExecutionGatewayOrderStatus
 from ta_model.contracts.risk import RiskDecisionStatus
@@ -82,8 +79,8 @@ def test_audit_gate_validation_passes_mixed_fill_blocked_and_no_trade_samples() 
         config=_gate_config(),
     )
 
-    assert report.status is AuditGateValidationStatus.PASSED
-    assert report.recommendation is AuditGateRecommendation.READY_FOR_REVIEW
+    assert report.status.value == "passed"
+    assert report.recommendation.value == "ready_for_audit_review"
     assert report.requirement_ids == ("FR-015", "NFR-004", "NFR-005")
     assert report.sample_count == 3
     assert report.passed_count == 2
@@ -113,12 +110,43 @@ def test_audit_gate_validation_passes_mixed_fill_blocked_and_no_trade_samples() 
 
 
 def test_public_audit_api_uses_resolver_backed_gate_entrypoint_only() -> None:
-    assert hasattr(audit_api, "run_audit_gate_validation")
-    assert not hasattr(audit_api, "make_audit_gate_trace_sample_result")
-    assert not hasattr(audit_api, "make_audit_gate_validation_report")
-    assert "run_audit_gate_validation" in audit_api.__all__
-    assert "make_audit_gate_trace_sample_result" not in audit_api.__all__
-    assert "make_audit_gate_validation_report" not in audit_api.__all__
+    expected_public_names = {
+        "AuditGateRunConfig",
+        "AuditGateSampleMethod",
+        "AuditGateSamplePolicy",
+        "AuditGateToleranceMode",
+        "AuditGateTolerancePolicy",
+        "make_audit_gate_run_config",
+        "run_audit_gate_validation",
+    }
+    for name in expected_public_names:
+        assert hasattr(audit_api, name)
+        assert name in audit_api.__all__
+
+    blocked_public_names = {
+        "AuditGateRecommendation",
+        "AuditGateRunManifest",
+        "AuditGateTraceSampleResult",
+        "AuditGateValidationBlocker",
+        "AuditGateValidationBlockerCode",
+        "AuditGateValidationReport",
+        "AuditGateValidationStatus",
+        "build_audit_gate_config_hash",
+        "build_audit_gate_run_manifest_hash",
+        "build_audit_gate_trace_sample_result_hash",
+        "build_audit_gate_trace_sample_result_id",
+        "build_audit_gate_validation_report_hash",
+        "build_audit_gate_validation_report_id",
+        "build_audit_run_id",
+        "build_decision_trace_replay_report_hash",
+        "build_decision_trace_replay_report_id",
+        "make_audit_gate_run_manifest",
+        "make_audit_gate_trace_sample_result",
+        "make_audit_gate_validation_report",
+    }
+    for name in blocked_public_names:
+        assert not hasattr(audit_api, name)
+        assert name not in audit_api.__all__
 
 
 def test_audit_gate_validation_reports_missing_and_tampered_blockers() -> None:
@@ -132,16 +160,16 @@ def test_audit_gate_validation_reports_missing_and_tampered_blockers() -> None:
         config=_gate_config(minimum_sample_count=2, require_no_order_sample=False),
     )
 
-    assert report.status is AuditGateValidationStatus.FAILED
-    assert report.recommendation is AuditGateRecommendation.BLOCKED
+    assert report.status.value == "failed"
+    assert report.recommendation.value == "blocked_until_replay_blockers_resolved"
     assert report.sample_count == 2
     assert report.failed_count == 2
     assert report.passed_count == 0
     assert report.no_order_count == 0
     assert report.blocker_count >= 2
     assert all(
-        blocker.code is AuditGateValidationBlockerCode.SAMPLE_REPLAY_FAILED
-        or blocker.code is AuditGateValidationBlockerCode.SAMPLE_POLICY_NOT_MET
+        blocker.code.value == "sample_replay_failed"
+        or blocker.code.value == "sample_policy_not_met"
         for blocker in report.blockers
     )
     assert DecisionTraceReplayBlockerCode.TAMPERED_EVIDENCE.value in {
@@ -163,7 +191,7 @@ def test_duplicate_trace_ids_fail_policy_and_do_not_satisfy_minimum_sample_count
         config=_gate_config(minimum_sample_count=3, require_no_order_sample=False),
     )
 
-    assert report.status is AuditGateValidationStatus.FAILED
+    assert report.status.value == "failed"
     assert report.passed_count == 3
     assert report.failed_count == 0
     assert report.blocker_count >= 2
@@ -182,7 +210,7 @@ def test_blank_trace_id_cannot_silently_pass_sample_policy() -> None:
         config=_gate_config(minimum_sample_count=1, require_no_order_sample=False),
     )
 
-    assert report.status is AuditGateValidationStatus.FAILED
+    assert report.status.value == "failed"
     assert report.manifest.trace_id_policy_errors == (
         "explicit trace_id at sample index 0 must be non-empty",
     )
@@ -245,7 +273,7 @@ def test_zero_sample_policy_is_rejected_and_empty_trace_set_fails_gate() -> None
         config=_gate_config(minimum_sample_count=1, require_no_order_sample=False),
     )
 
-    assert report.status is AuditGateValidationStatus.FAILED
+    assert report.status.value == "failed"
     assert report.sample_count == 0
     assert report.blocker_count == 1
     assert report.blockers[0].message == (
