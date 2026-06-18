@@ -128,6 +128,9 @@ class DecisionTraceReplayReport(ContractModel):
 
     trace_id: CanonicalId
     status: DecisionTraceReplayStatus
+    forecast_id: CanonicalId | None = None
+    strategy_decision_id: CanonicalId | None = None
+    strategy_decision_hash: str | None = None
     strategy_run_id: CanonicalId | None = None
     risk_run_id: CanonicalId | None = None
     original_gateway_run_id: CanonicalId | None = None
@@ -136,6 +139,8 @@ class DecisionTraceReplayReport(ContractModel):
     stored_trace_envelope_hash: str | None = None
     reconstructed_trace_envelope_id: CanonicalId | None = None
     reconstructed_trace_envelope_hash: str | None = None
+    stored_no_order_reason: NonEmptyString | None = None
+    reconstructed_no_order_reason: NonEmptyString | None = None
     original_gateway_report_id: CanonicalId | None = None
     original_gateway_report_hash: str | None = None
     replayed_gateway_report_id: CanonicalId | None = None
@@ -784,6 +789,9 @@ def _report(
     return DecisionTraceReplayReport(
         trace_id=trace_id,
         status=status,
+        forecast_id=evidence.forecast.forecast_id if evidence is not None else None,
+        strategy_decision_id=evidence.decision.decision_id if evidence is not None else None,
+        strategy_decision_hash=evidence.decision.decision_hash if evidence is not None else None,
         strategy_run_id=evidence.decision.strategy_run_id if evidence is not None else None,
         risk_run_id=(
             evidence.risk_event.request.run_id
@@ -811,6 +819,14 @@ def _report(
         ),
         reconstructed_trace_envelope_hash=(
             reconstructed_envelope.trace_envelope_hash
+            if reconstructed_envelope is not None
+            else None
+        ),
+        stored_no_order_reason=(
+            original_envelope.no_order_reason if original_envelope is not None else None
+        ),
+        reconstructed_no_order_reason=(
+            reconstructed_envelope.no_order_reason
             if reconstructed_envelope is not None
             else None
         ),

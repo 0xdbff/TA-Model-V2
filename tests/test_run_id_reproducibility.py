@@ -19,6 +19,7 @@ from ta_model.audit import (
     DecisionTraceReplayReport,
     DecisionTraceReplayStatus,
     InMemoryDecisionTraceEvidenceStore,
+    build_decision_trace_envelope_id,
     build_order_intent_from_strategy_decision,
     make_audit_gate_run_config,
     make_audit_gate_run_manifest,
@@ -97,6 +98,15 @@ def test_audit_gate_validation_passes_mixed_fill_blocked_and_no_trade_samples() 
     assert blocked.gateway_report.events[0].status is ExecutionGatewayOrderStatus.BLOCKED
     assert report.samples[1].replay_report.original_gateway_order_id is None
     assert report.samples[2].stored_trace_envelope_id == no_trade.envelope.trace_envelope_id
+    assert report.samples[2].replay_report.forecast_id == no_trade.forecast.forecast_id
+    assert report.samples[2].replay_report.strategy_decision_id == no_trade.decision.decision_id
+    assert report.samples[2].replay_report.strategy_decision_hash == no_trade.decision.decision_hash
+    assert report.samples[2].replay_report.stored_no_order_reason == (
+        no_trade.envelope.no_order_reason
+    )
+    assert report.samples[2].replay_report.reconstructed_no_order_reason == (
+        no_trade.envelope.no_order_reason
+    )
 
 
 def test_audit_gate_validation_reports_missing_and_tampered_blockers() -> None:
@@ -180,17 +190,36 @@ def test_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
 
 
 def test_envelope_only_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
+    envelope_hash = "a" * 64
+    envelope_id = build_decision_trace_envelope_id(trace_envelope_hash=envelope_hash)
     fabricated = DecisionTraceReplayReport(
         trace_id="TRACE:S11:FABRICATED-ENVELOPE-ONLY",
         status=DecisionTraceReplayStatus.PASSED,
         strategy_run_id="STRATEGYRUN:S11-FABRICATED",
-        stored_trace_envelope_id="AUDITTRACE:S11-FABRICATED",
-        stored_trace_envelope_hash="a" * 64,
-        reconstructed_trace_envelope_id="AUDITTRACE:S11-FABRICATED",
-        reconstructed_trace_envelope_hash="a" * 64,
+        stored_trace_envelope_id=envelope_id,
+        stored_trace_envelope_hash=envelope_hash,
+        reconstructed_trace_envelope_id=envelope_id,
+        reconstructed_trace_envelope_hash=envelope_hash,
     )
 
     with pytest.raises(ValueError, match="order replay evidence"):
+        make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+
+
+def test_envelope_only_fabricated_no_order_replay_report_cannot_create_pass_gate_sample() -> None:
+    envelope_hash = "b" * 64
+    envelope_id = build_decision_trace_envelope_id(trace_envelope_hash=envelope_hash)
+    fabricated = DecisionTraceReplayReport(
+        trace_id="TRACE:S11:FABRICATED-NO-ORDER",
+        status=DecisionTraceReplayStatus.NO_ORDER,
+        strategy_run_id="STRATEGYRUN:S11-FABRICATED",
+        stored_trace_envelope_id=envelope_id,
+        stored_trace_envelope_hash=envelope_hash,
+        reconstructed_trace_envelope_id=envelope_id,
+        reconstructed_trace_envelope_hash=envelope_hash,
+    )
+
+    with pytest.raises(ValueError, match="decision evidence"):
         make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
 
 

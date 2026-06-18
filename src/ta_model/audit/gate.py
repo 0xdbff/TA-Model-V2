@@ -30,6 +30,7 @@ from ta_model.audit.replay import (
     DecisionTraceReplayStatus,
     replay_decision_trace_by_id,
 )
+from ta_model.audit.trace import build_decision_trace_envelope_id
 from ta_model.contracts.instrument_master import CanonicalId, ContractModel, NonEmptyString
 
 _AUDIT_GATE_REQUIREMENTS = ("FR-015", "NFR-004", "NFR-005")
@@ -669,6 +670,9 @@ def _sample_replay_evidence_error(sample: AuditGateTraceSampleResult) -> str | N
                 "passed/no-order replay samples require stored and reconstructed "
                 "trace envelope IDs/hashes"
             )
+        envelope_identity_error = _trace_envelope_identity_error(sample=sample)
+        if envelope_identity_error is not None:
+            return envelope_identity_error
     if sample.replay_status is DecisionTraceReplayStatus.PASSED:
         return _passed_replay_sample_evidence_error(sample=sample)
     if sample.replay_status is DecisionTraceReplayStatus.NO_ORDER:
@@ -729,11 +733,39 @@ def _passed_replay_sample_evidence_error(sample: AuditGateTraceSampleResult) -> 
 
 def _no_order_sample_evidence_error(sample: AuditGateTraceSampleResult) -> str | None:
     report = sample.replay_report
-    missing = _missing_fields((("strategy_run_id", report.strategy_run_id),))
+    missing = _missing_fields(
+        (
+            ("forecast_id", report.forecast_id),
+            ("strategy_decision_id", report.strategy_decision_id),
+            ("strategy_decision_hash", report.strategy_decision_hash),
+            ("strategy_run_id", report.strategy_run_id),
+            ("stored_no_order_reason", report.stored_no_order_reason),
+            ("reconstructed_no_order_reason", report.reconstructed_no_order_reason),
+        )
+    )
     if missing:
-        return "no-order replay samples require strategy evidence: " + ",".join(missing)
+        return "no-order replay samples require decision evidence: " + ",".join(missing)
+    if report.stored_trace_envelope_id != report.reconstructed_trace_envelope_id:
+        return "no-order replay samples require matching stored/reconstructed trace envelope IDs"
+    if report.stored_trace_envelope_hash != report.reconstructed_trace_envelope_hash:
+        return "no-order replay samples require matching stored/reconstructed trace envelope hashes"
+    if report.stored_no_order_reason != report.reconstructed_no_order_reason:
+        return "no-order replay samples require matching stored/reconstructed no_order_reason"
     if _has_gateway_paper_or_tca_evidence(report=report):
         return "no-order replay samples must not include gateway, paper, or TCA evidence"
+    return None
+
+
+def _trace_envelope_identity_error(sample: AuditGateTraceSampleResult) -> str | None:
+    report = sample.replay_report
+    if report.stored_trace_envelope_id != build_decision_trace_envelope_id(
+        trace_envelope_hash=str(report.stored_trace_envelope_hash)
+    ):
+        return "replay samples require stored trace envelope ID to match its hash"
+    if report.reconstructed_trace_envelope_id != build_decision_trace_envelope_id(
+        trace_envelope_hash=str(report.reconstructed_trace_envelope_hash)
+    ):
+        return "replay samples require reconstructed trace envelope ID to match its hash"
     return None
 
 
