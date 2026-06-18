@@ -161,6 +161,80 @@ def test_tampered_gateway_client_order_evidence_fails_closed() -> None:
     assert report.replayed_gateway_report_id is None
 
 
+def test_tampered_forecast_artifact_fails_closed_before_gateway_replay() -> None:
+    evidence = _approved_replay_evidence()
+    tampered_forecast = evidence.forecast.model_copy(update={"uncertainty": Decimal("0.123")})
+
+    _assert_tampered_artifact_fails_closed(
+        evidence=evidence.model_copy(update={"forecast": tampered_forecast}),
+        expected_label="forecast",
+    )
+
+
+def test_tampered_strategy_decision_artifact_fails_closed_before_gateway_replay() -> None:
+    evidence = _approved_replay_evidence()
+    tampered_expected_return = evidence.decision.expected_return + Decimal("0.010")
+    tampered_decision = evidence.decision.model_copy(
+        update={
+            "expected_return": tampered_expected_return,
+            "net_edge": (
+                tampered_expected_return
+                - evidence.decision.expected_cost
+                - evidence.decision.uncertainty_buffer
+            ),
+        }
+    )
+
+    _assert_tampered_artifact_fails_closed(
+        evidence=evidence.model_copy(update={"decision": tampered_decision}),
+        expected_label="strategy_decision",
+    )
+
+
+def test_tampered_risk_event_request_artifact_fails_closed_before_gateway_replay() -> None:
+    evidence = _approved_replay_evidence()
+    assert evidence.risk_event is not None
+    tampered_request = evidence.risk_event.request.model_copy(
+        update={"reference_price": evidence.risk_event.request.reference_price + Decimal("1")}
+    )
+    tampered_risk_event = evidence.risk_event.model_copy(update={"request": tampered_request})
+
+    _assert_tampered_artifact_fails_closed(
+        evidence=evidence.model_copy(update={"risk_event": tampered_risk_event}),
+        expected_label="risk_event",
+    )
+
+
+def test_tampered_paper_account_log_artifact_fails_closed_before_gateway_replay() -> None:
+    evidence = _approved_replay_evidence()
+    assert evidence.paper_account_report is not None
+    tampered_order_log = evidence.paper_account_report.order_logs[0].model_copy(
+        update={"client_order_id": "ORDERINTENT:S11-STALE-PAPER-LOG"}
+    )
+    tampered_report = evidence.paper_account_report.model_copy(
+        update={"order_logs": (tampered_order_log,)}
+    )
+
+    _assert_tampered_artifact_fails_closed(
+        evidence=evidence.model_copy(update={"paper_account_report": tampered_report}),
+        expected_label="paper_account_report",
+    )
+
+
+def test_tampered_tca_artifact_fails_closed_before_gateway_replay() -> None:
+    evidence = _approved_replay_evidence()
+    assert evidence.paper_tca_report is not None
+    tampered_tca_row = evidence.paper_tca_report.rows[0].model_copy(
+        update={"client_order_id": "ORDERINTENT:S11-STALE-TCA-ROW"}
+    )
+    tampered_report = evidence.paper_tca_report.model_copy(update={"rows": (tampered_tca_row,)})
+
+    _assert_tampered_artifact_fails_closed(
+        evidence=evidence.model_copy(update={"paper_tca_report": tampered_report}),
+        expected_label="paper_tca_report",
+    )
+
+
 def test_duplicate_trace_evidence_fails_closed() -> None:
     evidence = _approved_replay_evidence()
 
@@ -194,6 +268,23 @@ class _WrongTraceResolver:
 
     def resolve_trace_evidence(self, trace_id: str) -> tuple[DecisionTraceReplayEvidence, ...]:
         return (self._evidence,)
+
+
+def _assert_tampered_artifact_fails_closed(
+    *, evidence: DecisionTraceReplayEvidence, expected_label: str
+) -> None:
+    report = replay_decision_trace_by_id(
+        trace_id=evidence.trace_id,
+        resolver=InMemoryDecisionTraceEvidenceStore((evidence,)),
+    )
+
+    assert report.status is DecisionTraceReplayStatus.FAILED
+    assert any(
+        blocker.code is DecisionTraceReplayBlockerCode.TAMPERED_EVIDENCE
+        and expected_label in blocker.message
+        for blocker in report.blockers
+    )
+    assert report.replayed_gateway_report_id is None
 
 
 def _approved_replay_evidence() -> DecisionTraceReplayEvidence:

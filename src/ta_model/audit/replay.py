@@ -230,6 +230,16 @@ def replay_decision_trace_by_id(
             blockers=(blocker,),
         )
 
+    artifact_blockers = _validate_replay_evidence_artifacts(evidence=evidence)
+    if artifact_blockers:
+        return _report(
+            trace_id=requested_trace_id,
+            status=DecisionTraceReplayStatus.FAILED,
+            evidence=evidence,
+            stored_envelope=stored_envelope,
+            blockers=tuple(artifact_blockers),
+        )
+
     missing_input_blockers = _missing_order_input_blockers(
         evidence=evidence, stored_envelope=stored_envelope
     )
@@ -424,6 +434,54 @@ def _requested_trace_blockers(
                 )
             )
     return blockers
+
+
+def _validate_replay_evidence_artifacts(
+    *, evidence: DecisionTraceReplayEvidence
+) -> list[DecisionTraceReplayBlocker]:
+    artifacts: list[tuple[str, ContractModel]] = [
+        ("forecast", evidence.forecast),
+        ("strategy_decision", evidence.decision),
+    ]
+    if evidence.order_intent is not None:
+        artifacts.append(("order_intent", evidence.order_intent))
+    if evidence.risk_event is not None:
+        artifacts.append(("risk_event", evidence.risk_event))
+        artifacts.append(("risk_event.request", evidence.risk_event.request))
+    if evidence.gateway_report is not None:
+        artifacts.append(("gateway_report", evidence.gateway_report))
+    if evidence.paper_account_report is not None:
+        artifacts.append(("paper_account_report", evidence.paper_account_report))
+    if evidence.paper_tca_report is not None:
+        artifacts.append(("paper_tca_report", evidence.paper_tca_report))
+    if evidence.execution_cost_model is not None:
+        artifacts.append(("execution_cost_model", evidence.execution_cost_model))
+    if evidence.instrument_master_snapshot is not None:
+        artifacts.append(("instrument_master_snapshot", evidence.instrument_master_snapshot))
+    if evidence.starting_account_state is not None:
+        artifacts.append(("starting_account_state", evidence.starting_account_state))
+    artifacts.extend((f"bar[{index}]", bar) for index, bar in enumerate(evidence.bars))
+    artifacts.extend((f"quote[{index}]", quote) for index, quote in enumerate(evidence.quotes))
+
+    blockers: list[DecisionTraceReplayBlocker] = []
+    for label, artifact in artifacts:
+        blocker = _validate_contract_artifact(label=label, artifact=artifact)
+        if blocker is not None:
+            blockers.append(blocker)
+    return blockers
+
+
+def _validate_contract_artifact(
+    *, label: str, artifact: ContractModel
+) -> DecisionTraceReplayBlocker | None:
+    try:
+        type(artifact).model_validate(artifact.model_dump())
+    except (TypeError, ValueError, ValidationError) as exc:
+        return DecisionTraceReplayBlocker(
+            code=DecisionTraceReplayBlockerCode.TAMPERED_EVIDENCE,
+            message=f"stored {label} artifact failed deterministic validation: {exc}",
+        )
+    return None
 
 
 def _missing_order_input_blockers(
