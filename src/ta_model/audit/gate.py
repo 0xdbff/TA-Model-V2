@@ -12,6 +12,10 @@ Scope:
 - Local typed contracts and pure report builders only. No datastore, network,
   Docker/runtime service, live capital, leverage, derivatives, or dependency
   changes are introduced.
+- Public acceptance reports must be created through ``run_audit_gate_validation``
+  so every sampled trace is replayed through the resolver-backed harness. The
+  low-level sample/report builders are private implementation details and are
+  not exported from ``ta_model.audit``.
 """
 
 from __future__ import annotations
@@ -326,16 +330,16 @@ def run_audit_gate_validation(
 
     manifest = make_audit_gate_run_manifest(config=config, trace_ids=trace_ids)
     samples = tuple(
-        make_audit_gate_trace_sample_result(
+        _make_audit_gate_trace_sample_result(
             sample_index=index,
             replay_report=replay_decision_trace_by_id(trace_id=trace_id, resolver=resolver),
         )
         for index, trace_id in enumerate(manifest.trace_ids)
     )
-    return make_audit_gate_validation_report(manifest=manifest, samples=samples)
+    return _make_audit_gate_validation_report(manifest=manifest, samples=samples)
 
 
-def make_audit_gate_trace_sample_result(
+def _make_audit_gate_trace_sample_result(
     *, sample_index: int, replay_report: DecisionTraceReplayReport
 ) -> AuditGateTraceSampleResult:
     """Wrap one replay report with deterministic sample IDs/hashes."""
@@ -368,7 +372,7 @@ def make_audit_gate_trace_sample_result(
     )
 
 
-def make_audit_gate_validation_report(
+def _make_audit_gate_validation_report(
     *,
     manifest: AuditGateRunManifest,
     samples: Sequence[AuditGateTraceSampleResult],

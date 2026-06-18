@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+import ta_model.audit as audit_api
 from risk_test_helpers import account_state, bar, default_policy, load_snapshot, risk_request
 from ta_model.audit import (
     AuditGateRecommendation,
@@ -23,11 +24,13 @@ from ta_model.audit import (
     build_order_intent_from_strategy_decision,
     make_audit_gate_run_config,
     make_audit_gate_run_manifest,
-    make_audit_gate_trace_sample_result,
-    make_audit_gate_validation_report,
     make_decision_trace_envelope,
     replay_decision_trace_by_id,
     run_audit_gate_validation,
+)
+from ta_model.audit.gate import (
+    _make_audit_gate_trace_sample_result,
+    _make_audit_gate_validation_report,
 )
 from ta_model.contracts.execution import ExecutionGatewayOrderStatus
 from ta_model.contracts.risk import RiskDecisionStatus
@@ -109,6 +112,15 @@ def test_audit_gate_validation_passes_mixed_fill_blocked_and_no_trade_samples() 
     )
 
 
+def test_public_audit_api_uses_resolver_backed_gate_entrypoint_only() -> None:
+    assert hasattr(audit_api, "run_audit_gate_validation")
+    assert not hasattr(audit_api, "make_audit_gate_trace_sample_result")
+    assert not hasattr(audit_api, "make_audit_gate_validation_report")
+    assert "run_audit_gate_validation" in audit_api.__all__
+    assert "make_audit_gate_trace_sample_result" not in audit_api.__all__
+    assert "make_audit_gate_validation_report" not in audit_api.__all__
+
+
 def test_audit_gate_validation_reports_missing_and_tampered_blockers() -> None:
     source = _approved_replay_evidence()
     tampered_forecast = source.forecast.model_copy(update={"uncertainty": Decimal("0.123")})
@@ -186,7 +198,7 @@ def test_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
     )
 
     with pytest.raises(ValueError, match="stored and reconstructed trace envelope"):
-        make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+        _make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
 
 
 def test_envelope_only_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
@@ -203,7 +215,7 @@ def test_envelope_only_fabricated_pass_replay_report_cannot_create_pass_gate_sam
     )
 
     with pytest.raises(ValueError, match="order replay evidence"):
-        make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+        _make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
 
 
 def test_envelope_only_fabricated_no_order_replay_report_cannot_create_pass_gate_sample() -> None:
@@ -220,7 +232,7 @@ def test_envelope_only_fabricated_no_order_replay_report_cannot_create_pass_gate
     )
 
     with pytest.raises(ValueError, match="decision evidence"):
-        make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+        _make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
 
 
 def test_zero_sample_policy_is_rejected_and_empty_trace_set_fails_gate() -> None:
@@ -248,7 +260,7 @@ def test_sample_manifest_trace_mismatch_fails_report_validation() -> None:
         trace_id=evidence.trace_id,
         resolver=InMemoryDecisionTraceEvidenceStore((evidence,)),
     )
-    sample = make_audit_gate_trace_sample_result(
+    sample = _make_audit_gate_trace_sample_result(
         sample_index=0,
         replay_report=replay_report,
     )
@@ -258,7 +270,7 @@ def test_sample_manifest_trace_mismatch_fails_report_validation() -> None:
     )
 
     with pytest.raises(ValueError, match="sample trace IDs must match manifest"):
-        make_audit_gate_validation_report(manifest=mismatched_manifest, samples=(sample,))
+        _make_audit_gate_validation_report(manifest=mismatched_manifest, samples=(sample,))
 
 
 def _gate_config(

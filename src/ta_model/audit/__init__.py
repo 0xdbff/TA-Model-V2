@@ -1,4 +1,8 @@
-"""Audit trace contracts and seams for decision reconstruction."""
+"""Audit trace contracts and seams for decision reconstruction.
+
+Use ``run_audit_gate_validation`` as the public audit gate acceptance entrypoint;
+it replays explicit trace IDs through a resolver before producing gate reports.
+"""
 
 from ta_model.audit.gate import (
     AuditGateRecommendation,
@@ -24,8 +28,6 @@ from ta_model.audit.gate import (
     build_decision_trace_replay_report_id,
     make_audit_gate_run_config,
     make_audit_gate_run_manifest,
-    make_audit_gate_trace_sample_result,
-    make_audit_gate_validation_report,
     run_audit_gate_validation,
 )
 from ta_model.audit.replay import (
@@ -87,8 +89,6 @@ __all__ = [
     "build_order_intent_from_strategy_decision",
     "make_audit_gate_run_config",
     "make_audit_gate_run_manifest",
-    "make_audit_gate_trace_sample_result",
-    "make_audit_gate_validation_report",
     "make_decision_trace_envelope",
     "replay_decision_trace_by_id",
     "run_audit_gate_validation",
