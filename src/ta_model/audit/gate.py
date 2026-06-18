@@ -76,7 +76,7 @@ class AuditGateSamplePolicy(ContractModel):
 
     method: AuditGateSampleMethod = AuditGateSampleMethod.EXPLICIT_TRACE_IDS
     description: NonEmptyString = "explicit deterministic S11 trace sample"
-    minimum_sample_count: int = Field(default=1, ge=0)
+    minimum_sample_count: int = Field(default=1, ge=1)
     require_no_order_sample: bool = False
     require_all_replays_passing: bool = True
 
@@ -669,11 +669,131 @@ def _sample_replay_evidence_error(sample: AuditGateTraceSampleResult) -> str | N
                 "passed/no-order replay samples require stored and reconstructed "
                 "trace envelope IDs/hashes"
             )
-        return None
+    if sample.replay_status is DecisionTraceReplayStatus.PASSED:
+        return _passed_replay_sample_evidence_error(sample=sample)
+    if sample.replay_status is DecisionTraceReplayStatus.NO_ORDER:
+        return _no_order_sample_evidence_error(sample=sample)
     if sample.replay_status is DecisionTraceReplayStatus.FAILED:
         if not sample.replay_report.blockers:
             return "failed replay samples require replay blockers"
     return None
+
+
+def _passed_replay_sample_evidence_error(sample: AuditGateTraceSampleResult) -> str | None:
+    report = sample.replay_report
+    missing = _missing_fields(
+        (
+            ("strategy_run_id", report.strategy_run_id),
+            ("risk_run_id", report.risk_run_id),
+            ("original_gateway_report_id", report.original_gateway_report_id),
+            ("original_gateway_report_hash", report.original_gateway_report_hash),
+            ("replayed_gateway_report_id", report.replayed_gateway_report_id),
+            ("replayed_gateway_report_hash", report.replayed_gateway_report_hash),
+            ("original_gateway_event_id", report.original_gateway_event_id),
+            ("original_gateway_event_hash", report.original_gateway_event_hash),
+            ("replayed_gateway_event_id", report.replayed_gateway_event_id),
+            ("replayed_gateway_event_hash", report.replayed_gateway_event_hash),
+            (
+                "original_paper_session_report_id",
+                report.original_paper_session_report_id,
+            ),
+            (
+                "original_paper_session_report_hash",
+                report.original_paper_session_report_hash,
+            ),
+            (
+                "replayed_paper_session_report_id",
+                report.replayed_paper_session_report_id,
+            ),
+            (
+                "replayed_paper_session_report_hash",
+                report.replayed_paper_session_report_hash,
+            ),
+            ("original_paper_tca_report_id", report.original_paper_tca_report_id),
+            ("original_paper_tca_report_hash", report.original_paper_tca_report_hash),
+            ("replayed_paper_tca_report_id", report.replayed_paper_tca_report_id),
+            ("replayed_paper_tca_report_hash", report.replayed_paper_tca_report_hash),
+        )
+    )
+    if missing:
+        return "passed replay samples require order replay evidence: " + ",".join(missing)
+    if not report.original_paper_order_log_ids or not report.replayed_paper_order_log_ids:
+        return "passed replay samples require original and replayed paper order log IDs"
+    if not _has_fill_or_rejection_evidence(report=report):
+        return (
+            "passed replay samples require either fill log/TCA row or "
+            "rejection log/TCA issue evidence"
+        )
+    return None
+
+
+def _no_order_sample_evidence_error(sample: AuditGateTraceSampleResult) -> str | None:
+    report = sample.replay_report
+    missing = _missing_fields((("strategy_run_id", report.strategy_run_id),))
+    if missing:
+        return "no-order replay samples require strategy evidence: " + ",".join(missing)
+    if _has_gateway_paper_or_tca_evidence(report=report):
+        return "no-order replay samples must not include gateway, paper, or TCA evidence"
+    return None
+
+
+def _missing_fields(fields: tuple[tuple[str, object | None], ...]) -> tuple[str, ...]:
+    return tuple(label for label, value in fields if value is None)
+
+
+def _has_fill_or_rejection_evidence(*, report: DecisionTraceReplayReport) -> bool:
+    has_fill_evidence = (
+        bool(report.original_paper_fill_log_ids)
+        and bool(report.replayed_paper_fill_log_ids)
+        and bool(report.original_paper_tca_row_ids)
+        and bool(report.replayed_paper_tca_row_ids)
+    )
+    has_rejection_evidence = (
+        bool(report.original_paper_rejection_log_ids)
+        and bool(report.replayed_paper_rejection_log_ids)
+        and bool(report.original_paper_tca_issue_ids)
+        and bool(report.replayed_paper_tca_issue_ids)
+    )
+    return has_fill_evidence or has_rejection_evidence
+
+
+def _has_gateway_paper_or_tca_evidence(*, report: DecisionTraceReplayReport) -> bool:
+    downstream_values = (
+        report.risk_run_id,
+        report.original_gateway_run_id,
+        report.replayed_gateway_run_id,
+        report.original_gateway_report_id,
+        report.original_gateway_report_hash,
+        report.replayed_gateway_report_id,
+        report.replayed_gateway_report_hash,
+        report.original_gateway_event_id,
+        report.original_gateway_event_hash,
+        report.replayed_gateway_event_id,
+        report.replayed_gateway_event_hash,
+        report.original_gateway_order_id,
+        report.replayed_gateway_order_id,
+        report.original_paper_session_report_id,
+        report.original_paper_session_report_hash,
+        report.replayed_paper_session_report_id,
+        report.replayed_paper_session_report_hash,
+        report.original_paper_tca_report_id,
+        report.original_paper_tca_report_hash,
+        report.replayed_paper_tca_report_id,
+        report.replayed_paper_tca_report_hash,
+    )
+    downstream_ids = (
+        *report.original_paper_order_log_ids,
+        *report.replayed_paper_order_log_ids,
+        *report.original_paper_fill_log_ids,
+        *report.replayed_paper_fill_log_ids,
+        *report.original_paper_rejection_log_ids,
+        *report.replayed_paper_rejection_log_ids,
+        *report.original_paper_tca_row_ids,
+        *report.replayed_paper_tca_row_ids,
+        *report.original_paper_tca_issue_ids,
+        *report.replayed_paper_tca_issue_ids,
+    )
+    return any(value is not None for value in downstream_values) or bool(downstream_ids)
 
 
 def _validate_passing_report_has_valid_policy_and_samples(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from risk_test_helpers import account_state, bar, default_policy, load_snapshot, risk_request
 from ta_model.audit import (
@@ -176,6 +177,40 @@ def test_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
 
     with pytest.raises(ValueError, match="stored and reconstructed trace envelope"):
         make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+
+
+def test_envelope_only_fabricated_pass_replay_report_cannot_create_pass_gate_sample() -> None:
+    fabricated = DecisionTraceReplayReport(
+        trace_id="TRACE:S11:FABRICATED-ENVELOPE-ONLY",
+        status=DecisionTraceReplayStatus.PASSED,
+        strategy_run_id="STRATEGYRUN:S11-FABRICATED",
+        stored_trace_envelope_id="AUDITTRACE:S11-FABRICATED",
+        stored_trace_envelope_hash="a" * 64,
+        reconstructed_trace_envelope_id="AUDITTRACE:S11-FABRICATED",
+        reconstructed_trace_envelope_hash="a" * 64,
+    )
+
+    with pytest.raises(ValueError, match="order replay evidence"):
+        make_audit_gate_trace_sample_result(sample_index=0, replay_report=fabricated)
+
+
+def test_zero_sample_policy_is_rejected_and_empty_trace_set_fails_gate() -> None:
+    with pytest.raises(ValidationError):
+        AuditGateSamplePolicy(minimum_sample_count=0)
+
+    report = run_audit_gate_validation(
+        trace_ids=(),
+        resolver=InMemoryDecisionTraceEvidenceStore(()),
+        config=_gate_config(minimum_sample_count=1, require_no_order_sample=False),
+    )
+
+    assert report.status is AuditGateValidationStatus.FAILED
+    assert report.sample_count == 0
+    assert report.blocker_count == 1
+    assert report.blockers[0].message == (
+        "unique non-empty sample count is below the configured minimum"
+    )
+    assert report.blockers[0].actual == "0"
 
 
 def test_sample_manifest_trace_mismatch_fails_report_validation() -> None:
