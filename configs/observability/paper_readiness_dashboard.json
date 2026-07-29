@@ -1,0 +1,85 @@
+{
+  "title": "S10 paper-readiness dashboard",
+  "version": "s10-004-v1",
+  "panels": [
+    {
+      "group": "data_health",
+      "title": "Data health and freshness",
+      "description": "Critical stream freshness and fail-closed data-health signals.",
+      "metric_ids": [
+        "paper.data.stale_critical_feed_count",
+        "paper.data.blocked_signal_count"
+      ],
+      "source_contracts": ["DataHealthSignal", "StreamHealthRecord"],
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#data-health-and-stale-feeds",
+      "requirement_ids": ["FR-002", "NFR-006", "RISK-014"]
+    },
+    {
+      "group": "model_validation",
+      "title": "Model validation, calibration, and drift readiness",
+      "description": "Forecast validation and calibration readiness from model gate reports.",
+      "metric_ids": [
+        "paper.model.calibration_error",
+        "paper.model.validation_blocker_count"
+      ],
+      "source_contracts": ["ModelValidationReport"],
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#model-validation-readiness",
+      "requirement_ids": ["FR-014", "RISK-014"]
+    },
+    {
+      "group": "strategy",
+      "title": "Strategy and no-trade quality",
+      "description": "No-trade utility and cost-drag evidence from strategy gate reports.",
+      "metric_ids": [
+        "paper.strategy.no_trade_quality_delta",
+        "paper.strategy.cost_drag_notional"
+      ],
+      "source_contracts": ["StrategyGateReport"],
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#strategy-gate-and-no-trade-quality",
+      "requirement_ids": ["FR-009", "FR-014", "RISK-014"]
+    },
+    {
+      "group": "portfolio",
+      "title": "Portfolio and paper account state",
+      "description": "Account-state linkage, execution cost totals, and drawdown-like risk telemetry.",
+      "metric_ids": [
+        "paper.portfolio.total_execution_cost",
+        "paper.portfolio.max_drawdown_pct",
+        "paper.portfolio.account_state_linkage_gap"
+      ],
+      "source_contracts": ["PaperAccountSessionReport", "RiskCheckEvent"],
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#portfolio-accounting-and-drawdown",
+      "requirement_ids": ["FR-013", "FR-014", "RISK-014"]
+    },
+    {
+      "group": "execution",
+      "title": "Execution, TCA, rejects, and slippage",
+      "description": "Paper TCA errors, order rejects, and cost prediction error evidence.",
+      "metric_ids": [
+        "paper.execution.tca_error_count",
+        "paper.execution.order_reject_count",
+        "paper.execution.cost_prediction_error_abs"
+      ],
+      "source_contracts": [
+        "ExecutionGatewayReport",
+        "PaperAccountSessionReport",
+        "PaperTcaReport"
+      ],
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#execution-tca-and-order-rejects",
+      "requirement_ids": ["FR-013", "FR-014", "US-011", "RISK-014"]
+    },
+    {
+      "group": "risk",
+      "title": "Risk, kill-switch, and pre-trade blocks",
+      "description": "Independent risk, kill-switch, and hard-breach evidence before paper gateway.",
+      "metric_ids": [
+        "paper.risk.kill_switch_block_count",
+        "paper.risk.pre_trade_block_count",
+        "paper.risk.hard_breach_count"
+      ],
+      "source_contracts": ["RiskCheckEvent", "PaperAccountSessionReport"],
+      "runbook_url": "docs/runbooks/paper-readiness/README.md#risk-kill-switch-and-pre-trade-blocks",
+      "requirement_ids": ["FR-010", "FR-011", "NFR-004", "RISK-014"]
+    }
+  ]
+}
